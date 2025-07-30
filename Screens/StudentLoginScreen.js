@@ -244,7 +244,7 @@ const StudentLoginScreen = () => {
             </Text>
             <TouchableOpacity 
               style={styles.backButton}
-              onPress={() => navigation.goBack()}
+               onPress={() => navigation.navigate('Login')}
             >
               <Icon name="keyboard-backspace" size={24} color="#64FFDA" />
             </TouchableOpacity>
@@ -355,9 +355,7 @@ const StudentLoginScreen = () => {
                 opacity: buttonAnim
               }}
             >
-              <TouchableOpacity>
-                <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-              </TouchableOpacity>
+             
             </Animated.View> <Animated.View
               style={{
                 width: '100%',
@@ -366,9 +364,9 @@ const StudentLoginScreen = () => {
                 opacity: buttonAnim
               }}
             >
-              <TouchableOpacity>
+              <TouchableOpacity onPress={() => Alert.alert('Forgot Password', 'Please contact your administrator to reset your password.')}>
                 <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-              </TouchableOpacity>
+                </TouchableOpacity>
             </Animated.View>
           </ScrollView>
 

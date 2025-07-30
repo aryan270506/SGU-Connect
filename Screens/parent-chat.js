@@ -11,12 +11,14 @@ import {
   KeyboardAvoidingView, 
   Platform,
   Modal,
-  ActivityIndicator
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons'; 
 import { firebase, database } from './firebase';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import ParentsTeacherChat from './ParentsTeacherChat';
+import { useNavigation } from '@react-navigation/native';
 
 const Tab = createBottomTabNavigator();
 
@@ -36,10 +38,12 @@ const AdminChatScreen = ({ route }) => {
   const [profileModalVisible, setProfileModalVisible] = useState(false);
   const [studentData, setStudentData] = useState(null);
   const [parentData, setParentData] = useState(null);
+
+   const navigation = useNavigation();
   
   // Get the PRN from route params if available
   const routeStudentData = route.params?.studentData;
-  const prn = routeStudentData?.prn || '242141003'; // Default fallback
+  const prn = routeStudentData?.prn || '9404041001'; // Default fallback (using id instead of prn_number)
   
   const flatListRef = useRef(null);
 
@@ -49,9 +53,9 @@ const AdminChatScreen = ({ route }) => {
       try {
         setLoading(true);
         
-        // Try to find the student data using the PRN
+        // Try to find the student data using the ID (which is the actual PRN)
         const snapshot = await database.ref('Parents')
-          .orderByChild('prn_number')
+          .orderByChild('id')
           .equalTo(prn)
           .once('value');
         
@@ -63,25 +67,25 @@ const AdminChatScreen = ({ route }) => {
           
           if (foundData) {
             const student = {
-              name: foundData.full_name || 'N/A',
-              prn: foundData.prn_number || 'N/A',
+              name: foundData.full_id || 'N/A', // Using full_id as name
+              prn: foundData.id || 'N/A', // Using id as PRN
               email: foundData.email || 'N/A',
               branch: foundData.branch || 'N/A',
               division: foundData.division || 'N/A',
-              admissionYear: foundData.year || '1st-year',
-              parentNumber: foundData.parent_number || 'N/A'
+              admissionYear: foundData.year || 'N/A',
+              parentNumber: foundData.password || 'N/A' // Using password as parent contact
             };
             
             setStudentData(student);
             setParentData({
-              number: foundData.parent_number || 'N/A'
+              number: foundData.password || 'N/A' // Using password as parent contact
             });
 
             // Initialize with empty messages since we're not fetching from Firebase
             setMessages([]);
           }
         } else {
-          console.log('No student found with PRN:', prn);
+          console.log('No student found with ID:', prn);
           if (routeStudentData) {
             setStudentData(routeStudentData);
             setMessages([]);
@@ -193,7 +197,7 @@ const AdminChatScreen = ({ route }) => {
               <ProfileItem 
                 icon="badge" 
                 label="PRN" 
-                value={studentData.prn} 
+                value={studentData.parentNumber} 
               />
               <ProfileItem 
                 icon="email" 
@@ -218,8 +222,41 @@ const AdminChatScreen = ({ route }) => {
               <ProfileItem 
                 icon="phone" 
                 label="Parent Contact" 
-                value={studentData.parentNumber} 
+                value={studentData.prn} 
               />
+
+               <TouchableOpacity
+                style={{
+                  marginTop: 24,
+                  backgroundColor: '#2196F3',
+                  paddingVertical: 12,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+                onPress={() => {
+                  Alert.alert(
+                    'Logout',
+                    'Are you sure you want to logout?',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { 
+                        text: 'Logout', 
+                        onPress: () => {
+                          navigation.reset({
+                            index: 0,
+                            routes: [{ name: 'ParentLogin' }]
+                          });
+                        }
+                      }
+                    ]
+                  );
+                }}
+              >
+                <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 16 }}>
+                  Logout
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>

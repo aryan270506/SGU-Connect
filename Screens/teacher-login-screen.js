@@ -188,11 +188,11 @@ const handleLogin = async () => {
         >
           <View style={styles.headerSection}>
             <Text style={styles.loginHeaderText}>
-              <Icon name="teach" size={28} color="#64FFDA" /> FACULTY ACCESS
+              <Icon name="account-tie" size={28} color="#64FFDA" /> FACULTY ACCESS
             </Text>
             <TouchableOpacity 
               style={styles.backButton}
-              onPress={() => navigation.goBack()}
+             onPress={() => navigation.navigate('Login')}
             >
               <Icon name="keyboard-backspace" size={24} color="#64FFDA" />
             </TouchableOpacity>
@@ -303,9 +303,9 @@ const handleLogin = async () => {
                 opacity: buttonAnim
               }}
             >
-              <TouchableOpacity>
+             <TouchableOpacity onPress={() => Alert.alert('Forgot Password', 'Please contact your administrator to reset your password.')}>
                 <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-              </TouchableOpacity>
+                </TouchableOpacity>
             </Animated.View>
           </ScrollView>
 

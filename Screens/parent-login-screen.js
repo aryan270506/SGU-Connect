@@ -225,7 +225,7 @@ const ParentLoginScreen = () => {
             </Text>
             <TouchableOpacity 
               style={styles.backButton}
-              onPress={() => navigation.goBack()}
+              onPress={() => navigation.navigate('Login')}
             >
               <Icon name="keyboard-backspace" size={24} color="#64FFDA" />
             </TouchableOpacity>
@@ -336,9 +336,9 @@ const ParentLoginScreen = () => {
                 opacity: buttonAnim
               }}
             >
-              <TouchableOpacity>
+             <TouchableOpacity onPress={() => Alert.alert('Forgot Password', 'Please contact your administrator to reset your password.')}>
                 <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-              </TouchableOpacity>
+                </TouchableOpacity>
             </Animated.View>
 
             {/* Debug Info - Only shown in development */}

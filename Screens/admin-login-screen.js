@@ -203,7 +203,7 @@ const AdminLoginScreen = () => {
             </Text>
             <TouchableOpacity 
               style={styles.backButton}
-              onPress={() => navigation.goBack()}
+               onPress={() => navigation.navigate('Login')}
             >
               <Icon name="keyboard-backspace" size={24} color="#64FFDA" />
             </TouchableOpacity>
@@ -301,7 +301,10 @@ const AdminLoginScreen = () => {
                     </View>
                   )}
                 </LinearGradient>
+                
               </TouchableOpacity>
+             
+             
             </Animated.View>
           </ScrollView>
 
@@ -455,6 +458,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontFamily: 'monospace',
     letterSpacing: 1,
+  },
+  forgotPasswordText: {
+    color: '#64FFDA',
+    fontSize: 14,
+    textDecorationLine: 'underline',
+    fontFamily: 'monospace',
+    paddingTop: 30,
   },
   securityNote: {
     position: 'absolute',

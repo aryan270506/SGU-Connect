@@ -98,7 +98,7 @@ const TeacherProfileScreen = () => {
           onPress: () => {
             navigation.reset({
               index: 0,
-              routes: [{ name: 'TeacherLoginScreen' }]
+              routes: [{ name: 'TeacherLogin' }]
             });
           }
         }
