@@ -10,7 +10,10 @@ import {
   Platform,
   SafeAreaView,
   StatusBar,
+  Image,
+  Alert,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 
 const ChatScreen = () => {
   const [messages, setMessages] = useState([
@@ -19,24 +22,28 @@ const ChatScreen = () => {
       text: 'Hello! How are you doing today?',
       sender: 'other',
       timestamp: new Date(Date.now() - 300000),
+      type: 'text',
     },
     {
       id: '2',
       text: 'I\'m doing great, thanks for asking! How about you?',
       sender: 'me',
       timestamp: new Date(Date.now() - 240000),
+      type: 'text',
     },
     {
       id: '3',
       text: 'I\'m doing well too! What are your plans for the weekend?',
       sender: 'other',
       timestamp: new Date(Date.now() - 180000),
+      type: 'text',
     },
     {
       id: '4',
       text: 'Planning to go hiking if the weather is nice. Want to join?',
       sender: 'me',
       timestamp: new Date(Date.now() - 120000),
+      type: 'text',
     },
   ]);
   
@@ -54,6 +61,7 @@ const ChatScreen = () => {
         text: inputText.trim(),
         sender: 'me',
         timestamp: new Date(),
+        type: 'text',
       };
       
       setMessages(prev => [...prev, newMessage]);
@@ -66,18 +74,123 @@ const ChatScreen = () => {
     }
   };
 
+  const sendImage = (imageUri) => {
+    const newMessage = {
+      id: Date.now().toString(),
+      imageUri: imageUri,
+      sender: 'me',
+      timestamp: new Date(),
+      type: 'image',
+    };
+    
+    setMessages(prev => [...prev, newMessage]);
+    
+    // Scroll to bottom after sending image
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  };
+
+  const showImagePicker = () => {
+    Alert.alert(
+      'Add Image',
+      'Choose an option',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Take Photo', 
+          onPress: () => openCamera()
+        },
+        { 
+          text: 'Choose from Library', 
+          onPress: () => openGallery()
+        }
+      ]
+    );
+  };
+
+  const openCamera = async () => {
+    try {
+      // Request camera permissions
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+        return;
+      }
+
+      // Launch camera
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening camera:', error);
+      Alert.alert('Error', 'Failed to open camera. Please try again.');
+    }
+  };
+
+  const openGallery = async () => {
+    try {
+      // Request media library permissions
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Gallery permission is required to select photos.');
+        return;
+      }
+
+      // Launch image library
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+        selectionLimit: 1,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening gallery:', error);
+      Alert.alert('Error', 'Failed to open gallery. Please try again.');
+    }
+  };
+
   const renderMessage = ({ item }) => {
     const isMe = item.sender === 'me';
     
     return (
       <View style={[styles.messageContainer, isMe ? styles.myMessage : styles.otherMessage]}>
         <View style={[styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
-          <Text style={[styles.messageText, isMe ? styles.myText : styles.otherText]}>
-            {item.text}
-          </Text>
-          <Text style={[styles.timestamp, isMe ? styles.myTimestamp : styles.otherTimestamp]}>
-            {formatTime(item.timestamp)}
-          </Text>
+          {item.type === 'image' ? (
+            <View>
+              <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
+              <Text style={[styles.timestamp, isMe ? styles.myTimestamp : styles.otherTimestamp]}>
+                {formatTime(item.timestamp)}
+              </Text>
+            </View>
+          ) : (
+            <View>
+              <Text style={[styles.messageText, isMe ? styles.myText : styles.otherText]}>
+                {item.text}
+              </Text>
+              <Text style={[styles.timestamp, isMe ? styles.myTimestamp : styles.otherTimestamp]}>
+                {formatTime(item.timestamp)}
+              </Text>
+            </View>
+          )}
         </View>
       </View>
     );
@@ -121,6 +234,13 @@ const ChatScreen = () => {
 
         {/* Input Area */}
         <View style={styles.inputContainer}>
+          <TouchableOpacity
+            style={styles.imageButton}
+            onPress={showImagePicker}
+          >
+            <Text style={styles.imageButtonText}>📷</Text>
+          </TouchableOpacity>
+          
           <TextInput
             style={styles.textInput}
             value={inputText}
@@ -132,6 +252,7 @@ const ChatScreen = () => {
             onSubmitEditing={sendMessage}
             blurOnSubmit={false}
           />
+          
           <TouchableOpacity
             style={[styles.sendButton, inputText.trim() ? styles.sendButtonActive : styles.sendButtonInactive]}
             onPress={sendMessage}
@@ -232,6 +353,12 @@ const styles = StyleSheet.create({
   otherText: {
     color: '#333',
   },
+  messageImage: {
+    width: 200,
+    height: 200,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
   timestamp: {
     fontSize: 12,
     marginTop: 4,
@@ -251,6 +378,18 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#e1e1e1',
     alignItems: 'flex-end',
+  },
+  imageButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  imageButtonText: {
+    fontSize: 20,
   },
   textInput: {
     flex: 1,

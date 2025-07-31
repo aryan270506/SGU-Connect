@@ -14,10 +14,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Image,
+  ActivityIndicator,
+  Keyboard,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { database } from './firebase';
 import { ref, onValue, push, set, off, query, orderByChild, equalTo } from 'firebase/database';
+import * as ImagePicker from 'expo-image-picker';
 
 const { width } = Dimensions.get('window');
 const DRAWER_WIDTH = width * 0.7;
@@ -30,12 +34,34 @@ const AdminTeacherChat = () => {
   const [messages, setMessages] = useState({});
   const [currentMessage, setCurrentMessage] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('connected');
+  const [imageLoading, setImageLoading] = useState(false);
   const [teacherGroups, setTeacherGroups] = useState({
     'All Teachers': [],
     '1st Year': [],
     '2nd Year': [],
     '3rd Year': [],
   });
+  
+  const flatListRef = useRef(null);
+
+  // Generate a unique ID for messages
+  const generateId = () => Math.random().toString(36).substring(2, 9);
+
+  // Auto-scroll when keyboard appears
+  useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => {
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 300);
+      }
+    );
+
+    return () => {
+      keyboardDidShowListener.remove();
+    };
+  }, []);
   
   // Fetch teachers from Firebase
   useEffect(() => {
@@ -105,6 +131,8 @@ const AdminTeacherChat = () => {
           formattedMessages.push({
             id: key,
             text: msg.text,
+            imageUri: msg.imageUri,
+            type: msg.type || 'text',
             sender: msg.sender,
             timestamp: new Date(msg.timestamp),
           });
@@ -126,14 +154,15 @@ const AdminTeacherChat = () => {
     };
   }, [selectedGroup]);
 
-  // Send message - only to Firebase for groups, local state for teachers
+  // Send text message
   const sendMessage = async () => {
     if (currentMessage.trim() === '') return;
     
     const chatKey = getCurrentChatKey();
     const newMessage = {
-      id: Date.now().toString(), // Temporary ID for local messages
+      id: generateId(),
       text: currentMessage,
+      type: 'text',
       sender: 'Admin',
       timestamp: new Date(),
     };
@@ -162,6 +191,136 @@ const AdminTeacherChat = () => {
     }
     
     setCurrentMessage('');
+    
+    // Scroll to bottom after sending message
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated: true });
+    }, 200);
+  };
+
+  // Send image message
+  const sendImage = async (imageUri) => {
+    setImageLoading(true);
+    try {
+      const chatKey = getCurrentChatKey();
+      const newMessage = {
+        id: generateId(),
+        imageUri: imageUri,
+        type: 'image',
+        sender: 'Admin',
+        timestamp: new Date(),
+      };
+
+      if (selectedTeacher) {
+        // For teacher chats - store locally only
+        setMessages(prev => ({
+          ...prev,
+          [chatKey]: [...(prev[chatKey] || []), newMessage],
+        }));
+      } else if (selectedGroup) {
+        // For group chats - send to Firebase
+        try {
+          const year = selectedGroup.split(' ')[0];
+          const messagesRef = ref(database, `chats/year_${year}`);
+          const newMessageRef = push(messagesRef);
+          await set(newMessageRef, {
+            ...newMessage,
+            timestamp: newMessage.timestamp.getTime(),
+          });
+        } catch (error) {
+          console.error('Error sending image to group:', error);
+          Alert.alert('Error', 'Failed to send image to group');
+          return;
+        }
+      }
+      
+      // Scroll to bottom after sending
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 200);
+      
+    } catch (error) {
+      console.error('Error sending image:', error);
+      Alert.alert('Error', 'Failed to send image. Please try again.');
+    } finally {
+      setImageLoading(false);
+    }
+  };
+
+  // Show image picker options
+  const showImagePicker = () => {
+    Alert.alert(
+      'Add Image',
+      'Choose an option',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Take Photo', 
+          onPress: () => openCamera()
+        },
+        { 
+          text: 'Choose from Library', 
+          onPress: () => openGallery()
+        }
+      ]
+    );
+  };
+
+  // Open camera
+  const openCamera = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        await sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening camera:', error);
+      Alert.alert('Error', 'Failed to open camera. Please try again.');
+    }
+  };
+
+  // Open gallery
+  const openGallery = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Gallery permission is required to select photos.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+        selectionLimit: 1,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        await sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening gallery:', error);
+      Alert.alert('Error', 'Failed to open gallery. Please try again.');
+    }
   };
 
   // Animation for drawer
@@ -233,9 +392,17 @@ const AdminTeacherChat = () => {
             styles.messageBubble,
             isSent ? styles.sentMessageBubble : styles.receivedMessageBubble
           ]}>
-            <Text style={isSent ? styles.sentMessageText : styles.receivedMessageText}>
-              {item.text}
-            </Text>
+            {item.type === 'image' ? (
+              <Image 
+                source={{ uri: item.imageUri }} 
+                style={styles.messageImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <Text style={isSent ? styles.sentMessageText : styles.receivedMessageText}>
+                {item.text}
+              </Text>
+            )}
           </View>
           <Text style={[
             styles.messageTime,
@@ -296,19 +463,19 @@ const AdminTeacherChat = () => {
         
         {!selectedTeacher && !selectedGroup ? (
           /* Teacher List View */
-          <FlatList
-            style={styles.teacherListContainer}
-            data={teacherGroups[activeSection]}
-            renderItem={renderTeacherItem}
-            keyExtractor={item => `teacher_${item.id}`}
-            ListHeaderComponent={
-              <Text style={styles.teacherListHeader}>
-                {activeSection === 'All Teachers' 
-                  ? `All Teachers (${teacherGroups[activeSection].length})` 
-                  : `${activeSection} Teachers (${teacherGroups[activeSection].length})`}
-              </Text>
-            }
-          />
+         <FlatList
+          style={styles.teacherListContainer}
+          data={teacherGroups[activeSection]}
+          renderItem={renderTeacherItem}
+          keyExtractor={item => `teacher_${item.id}_${item.name}`} // Added name to ensure uniqueness
+          ListHeaderComponent={
+            <Text style={styles.teacherListHeader}>
+              {activeSection === 'All Teachers' 
+                ? `All Teachers (${teacherGroups[activeSection].length})` 
+                : `${activeSection} Teachers (${teacherGroups[activeSection].length})`}
+            </Text>
+          }
+        />
         ) : (
           /* Chat View (Individual or Group) */
           <KeyboardAvoidingView
@@ -329,15 +496,32 @@ const AdminTeacherChat = () => {
               </View>
             ) : (
               <FlatList
+                ref={flatListRef}
                 data={messages[getCurrentChatKey()]}
                 renderItem={renderMessageItem}
                 keyExtractor={item => `message_${item.id}`}
                 contentContainerStyle={styles.messagesList}
+                showsVerticalScrollIndicator={false}
+                onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+                onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
               />
             )}
             
             {/* Message Input */}
             <View style={styles.inputContainer}>
+              {/* Image picker button */}
+              <TouchableOpacity
+                style={styles.imageButton}
+                onPress={showImagePicker}
+                disabled={imageLoading}
+              >
+                <MaterialIcons 
+                  name="camera-alt" 
+                  size={24} 
+                  color={imageLoading ? "#B0BEC5" : "#4a6fa5"} 
+                />
+              </TouchableOpacity>
+
               <TextInput
                 style={styles.input}
                 value={currentMessage}
@@ -345,17 +529,24 @@ const AdminTeacherChat = () => {
                 placeholder={getInputPlaceholder()}
                 placeholderTextColor="#999"
                 multiline
+                maxHeight={100}
+                editable={!imageLoading}
               />
+              
               <TouchableOpacity 
                 style={styles.sendButton} 
                 onPress={sendMessage}
-                disabled={currentMessage.trim() === ''}
+                disabled={currentMessage.trim() === '' || imageLoading}
               >
-                <Ionicons 
-                  name="send" 
-                  size={24} 
-                  color={currentMessage.trim() === '' ? '#b8c7d9' : 'white'} 
-                />
+                {imageLoading ? (
+                  <ActivityIndicator size={20} color="#B0BEC5" />
+                ) : (
+                  <Ionicons 
+                    name="send" 
+                    size={24} 
+                    color={currentMessage.trim() === '' ? '#ccc' : 'white'} 
+                  />
+                )}
               </TouchableOpacity>
             </View>
           </KeyboardAvoidingView>
@@ -668,6 +859,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 
+  // Message image styles
+  messageImage: {
+    width: 200,
+    height: 150,
+    borderRadius: 8,
+  },
+
   // Message time styles
   messageTime: {
     fontSize: 12,
@@ -689,6 +887,14 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#eee',
     alignItems: 'flex-end',
+  },
+  imageButton: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 40,
+    height: 40,
+    marginRight: 8,
+    borderRadius: 20,
   },
   input: {
     flex: 1,

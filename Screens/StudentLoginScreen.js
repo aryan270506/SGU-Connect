@@ -347,16 +347,7 @@ const StudentLoginScreen = () => {
             </Animated.View>
 
             {/* Forgot Password */}
-            <Animated.View
-              style={{
-                width: '100%',
-                alignItems: 'center',
-                marginTop: 20,
-                opacity: buttonAnim
-              }}
-            >
-             
-            </Animated.View> <Animated.View
+             <Animated.View
               style={{
                 width: '100%',
                 alignItems: 'center',

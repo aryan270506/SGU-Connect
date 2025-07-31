@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import YearDivisionSelector from './teacher-student-year-div';
 import TeacherProfileScreen from './Teacher-Profile';
-import StudentChatScreen from './teacher-parent-chat';
+import TeacherParentChatSCreen from './teacher-parent-chat';
 import DoubtStudentList from './teacher-student-doubt';
 import RoleSelectionScreen from './Teacher-Admin';
 import AssignmentYearDivisionSelector from './teacher-student-assignment-div-year';

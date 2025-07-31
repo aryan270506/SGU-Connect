@@ -10,9 +10,11 @@ import {
   Image
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 
 const DoubtStudentList = () => {
   const [searchText, setSearchText] = useState('');
+  const navigation = useNavigation(); 
   
   // Sample student data
   const students = [
@@ -71,7 +73,10 @@ const DoubtStudentList = () => {
         data={filteredStudents}
         keyExtractor={item => item.id}
         renderItem={({ item }) => (
-          <TouchableOpacity style={styles.studentItem}>
+          <TouchableOpacity
+            style={styles.studentItem}
+            onPress={() => navigation.navigate('TeacherStudentDoubtReply', { student: item })} // <-- Add this
+          >
             <View style={styles.avatar}>
               <Text style={styles.avatarText}>
                 {item.name.charAt(0)}

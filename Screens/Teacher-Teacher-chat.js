@@ -10,17 +10,21 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
-  Keyboard
+  Keyboard,
+  Alert,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 
 const teacherteacherChatScreen = () => {
   const [messages, setMessages] = useState([
-    { id: '1', text: 'Hello there!', sender: 'teacher', time: '10:00 AM' },
-    { id: '2', text: 'Hi! How can I help you today?', sender: 'admin', time: '10:02 AM' },
-    { id: '3', text: 'I have a question about the schedule', sender: 'teacher', time: '10:03 AM' },
+    { id: '1', text: 'Hello there!', sender: 'teacher', time: '10:00 AM', type: 'text' },
+    { id: '2', text: 'Hi! How can I help you today?', sender: 'admin', time: '10:02 AM', type: 'text' },
+    { id: '3', text: 'I have a question about the schedule', sender: 'teacher', time: '10:03 AM', type: 'text' },
   ]);
   
   const [newMessage, setNewMessage] = useState('');
+  const [loading, setLoading] = useState(false);
   const flatListRef = useRef(null);
 
   const handleSend = () => {
@@ -31,6 +35,7 @@ const teacherteacherChatScreen = () => {
       text: newMessage,
       sender: 'admin', // Change based on actual user
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      type: 'text',
     };
     
     setMessages([...messages, newMsg]);
@@ -42,14 +47,124 @@ const teacherteacherChatScreen = () => {
     }, 100);
   };
 
+  const sendImage = async (imageUri) => {
+    setLoading(true);
+    try {
+      const newMsg = {
+        id: Date.now().toString(),
+        imageUri: imageUri,
+        sender: 'admin', // Change based on actual user
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        type: 'image',
+      };
+      
+      setMessages(prevMessages => [...prevMessages, newMsg]);
+      
+      // Scroll to bottom after sending
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+      
+      // Show success feedback
+      Alert.alert('Success', 'Image sent successfully!');
+      
+    } catch (error) {
+      console.error('Error sending image:', error);
+      Alert.alert('Error', 'Failed to send image. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const showImagePicker = () => {
+    Alert.alert(
+      'Add Image',
+      'Choose an option',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Take Photo', 
+          onPress: () => openCamera()
+        },
+        { 
+          text: 'Choose from Library', 
+          onPress: () => openGallery()
+        }
+      ]
+    );
+  };
+
+  const openCamera = async () => {
+    try {
+      // Request camera permissions
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+        return;
+      }
+
+      // Launch camera
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        await sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening camera:', error);
+      Alert.alert('Error', 'Failed to open camera. Please try again.');
+    }
+  };
+
+  const openGallery = async () => {
+    try {
+      // Request media library permissions
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Gallery permission is required to select photos.');
+        return;
+      }
+
+      // Launch image library
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+        selectionLimit: 1,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        await sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening gallery:', error);
+      Alert.alert('Error', 'Failed to open gallery. Please try again.');
+    }
+  };
+
   const renderMessage = ({ item }) => (
     <View style={[
       styles.messageContainer,
       item.sender === 'admin' ? styles.adminMessage : styles.teacherMessage
     ]}>
-      <Text style={item.sender === 'admin' ? styles.adminText : styles.teacherText}>
-        {item.text}
-      </Text>
+      {item.type === 'image' ? (
+        <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
+      ) : (
+        <Text style={item.sender === 'admin' ? styles.adminText : styles.teacherText}>
+          {item.text}
+        </Text>
+      )}
       <Text style={item.sender === 'admin' ? styles.adminTime : styles.teacherTime}>
         {item.time}
       </Text>
@@ -99,6 +214,14 @@ const teacherteacherChatScreen = () => {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.inputContainer}
       >
+        <TouchableOpacity
+          style={styles.imageButton}
+          onPress={showImagePicker}
+          disabled={loading}
+        >
+          <Ionicons name="camera" size={24} color="#6200ee" />
+        </TouchableOpacity>
+        
         <TextInput
           style={styles.input}
           value={newMessage}
@@ -106,13 +229,22 @@ const teacherteacherChatScreen = () => {
           placeholder="Type a message..."
           placeholderTextColor="#999"
           multiline
+          editable={!loading}
         />
+        
         <TouchableOpacity 
-          style={styles.sendButton} 
+          style={[
+            styles.sendButton,
+            (!newMessage.trim() || loading) && styles.sendButtonDisabled
+          ]} 
           onPress={handleSend}
-          disabled={!newMessage.trim()}
+          disabled={(!newMessage.trim() && !loading) || loading}
         >
-          <Text style={styles.sendText}>Send</Text>
+          {loading ? (
+            <Ionicons name="hourglass" size={20} color="#fff" />
+          ) : (
+            <Text style={styles.sendText}>Send</Text>
+          )}
         </TouchableOpacity>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -185,6 +317,13 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
     marginTop: 5,
   },
+  messageImage: {
+    width: 200,
+    height: 150,
+    borderRadius: 8,
+    resizeMode: 'cover',
+    marginBottom: 5,
+  },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -193,6 +332,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
+  },
+  imageButton: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    height: 40,
+    marginRight: 10,
   },
   input: {
     flex: 1,
@@ -215,6 +361,10 @@ const styles = StyleSheet.create({
   },
   sendButtonActive: {
     opacity: 1,
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#ccc',
+    opacity: 0.5,
   },
   sendText: {
     color: '#fff',

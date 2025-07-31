@@ -21,7 +21,7 @@ import * as ImagePicker from 'expo-image-picker';
 
 const { width } = Dimensions.get('window');
 
-const TeacherChatScreen = () => {
+const TeacherStudentDoubtReply = () => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -291,12 +291,10 @@ const TeacherChatScreen = () => {
           <Text style={styles.headerTitle}>
             {selectedYear?.label} - {selectedDivision?.label}
           </Text>
-          <Text style={styles.headerSubtitle}>Teacher Announcements</Text>
+          <Text style={styles.headerSubtitle}>Students Doubts</Text>
         </View>
         
-        <View style={styles.headerRight}>
-          <Ionicons name="megaphone" size={24} color="#fff" />
-        </View>
+        
       </View>
 
       <KeyboardAvoidingView 
@@ -329,7 +327,7 @@ const TeacherChatScreen = () => {
             
             <TextInput
               style={styles.textInput}
-              placeholder="Type Your Announcement..."
+              placeholder="Type Your Answer..."
               placeholderTextColor="#999"
               value={message}
               onChangeText={setMessage}
@@ -399,7 +397,7 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     color: 'rgba(255, 255, 255, 0.8)',
-    fontSize: 14,
+    fontSize: 24,
     marginTop: 2,
   },
   headerRight: {
@@ -541,4 +539,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default TeacherChatScreen;
+export default TeacherStudentDoubtReply;

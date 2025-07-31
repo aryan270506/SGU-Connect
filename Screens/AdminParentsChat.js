@@ -11,8 +11,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { database, auth } from './firebase';
 
 const AdminParentsChat = () => {
@@ -20,6 +23,7 @@ const AdminParentsChat = () => {
   const [messages, setMessages] = useState({});
   const [currentMessage, setCurrentMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [imageLoading, setImageLoading] = useState(false);
 
   // Years data
   const years = [
@@ -44,83 +48,82 @@ const AdminParentsChat = () => {
   ];
 
   // Fetch messages for a specific year from Firebase Realtime Database
-// Update the useEffect hook in AdminParentsChat.js
-useEffect(() => {
-  if (!selectedYear) return;
+  useEffect(() => {
+    if (!selectedYear) return;
 
-  setIsLoading(true);
-  const adminMessagesRef = database.ref(`admin_parent_messages/${selectedYear}`);
-  const parentMessagesRef = database.ref('parent_messages');
+    setIsLoading(true);
+    const adminMessagesRef = database.ref(`admin_parent_messages/${selectedYear}`);
+    const parentMessagesRef = database.ref('parent_messages');
 
-  const combineMessages = (adminSnap, parentSnap) => {
-    const fetchedMessages = [];
-    
-    // Process admin messages
-    if (adminSnap.exists()) {
-      adminSnap.forEach((childSnapshot) => {
-        const message = childSnapshot.val();
-        fetchedMessages.push({
-          id: childSnapshot.key,
-          ...message,
-          sender: 'Admin',
-          timestamp: new Date(message.timestamp),
-        });
-      });
-    }
-    
-    // Process parent messages and filter by year
-    if (parentSnap.exists()) {
-  parentSnap.forEach((parentNode) => {
-    parentNode.forEach((messageNode) => {
-      const message = messageNode.val();
-      if (message.year === selectedYear) {
-        fetchedMessages.push({
-          id: messageNode.key,
-          ...message,
-          sender: 'Parent',
-          timestamp: new Date(message.timestamp),
+    const combineMessages = (adminSnap, parentSnap) => {
+      const fetchedMessages = [];
+      
+      // Process admin messages
+      if (adminSnap.exists()) {
+        adminSnap.forEach((childSnapshot) => {
+          const message = childSnapshot.val();
+          fetchedMessages.push({
+            id: childSnapshot.key,
+            ...message,
+            sender: 'Admin',
+            timestamp: new Date(message.timestamp),
+          });
         });
       }
-    });
-  });
-}
-    // Sort messages by timestamp
-    fetchedMessages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      
+      // Process parent messages and filter by year
+      if (parentSnap.exists()) {
+        parentSnap.forEach((parentNode) => {
+          parentNode.forEach((messageNode) => {
+            const message = messageNode.val();
+            if (message.year === selectedYear) {
+              fetchedMessages.push({
+                id: messageNode.key,
+                ...message,
+                sender: 'Parent',
+                timestamp: new Date(message.timestamp),
+              });
+            }
+          });
+        });
+      }
+      // Sort messages by timestamp
+      fetchedMessages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-    setMessages(prev => ({
-      ...prev,
-      [selectedYear]: fetchedMessages,
-    }));
-    setIsLoading(false);
-  };
+      setMessages(prev => ({
+        ...prev,
+        [selectedYear]: fetchedMessages,
+      }));
+      setIsLoading(false);
+    };
 
-  const onError = (error) => {
-    console.error('Error fetching messages:', error);
-    Alert.alert('Error', 'Unable to fetch messages');
-    setIsLoading(false);
-  };
+    const onError = (error) => {
+      console.error('Error fetching messages:', error);
+      Alert.alert('Error', 'Unable to fetch messages');
+      setIsLoading(false);
+    };
 
-  // Set up listeners for both message sources
-  adminMessagesRef.on('value', (adminSnap) => {
-    parentMessagesRef.once('value', (parentSnap) => {
-      combineMessages(adminSnap, parentSnap);
+    // Set up listeners for both message sources
+    adminMessagesRef.on('value', (adminSnap) => {
+      parentMessagesRef.once('value', (parentSnap) => {
+        combineMessages(adminSnap, parentSnap);
+      }, onError);
     }, onError);
-  }, onError);
 
-  parentMessagesRef.on('value', (parentSnap) => {
-    adminMessagesRef.once('value', (adminSnap) => {
-      combineMessages(adminSnap, parentSnap);
+    parentMessagesRef.on('value', (parentSnap) => {
+      adminMessagesRef.once('value', (adminSnap) => {
+        combineMessages(adminSnap, parentSnap);
+      }, onError);
     }, onError);
-  }, onError);
 
-  // Cleanup listeners
-  return () => {
-    adminMessagesRef.off();
-    parentMessagesRef.off();
-  };
-}, [selectedYear]);
+    // Cleanup listeners
+    return () => {
+      adminMessagesRef.off();
+      parentMessagesRef.off();
+    };
+  }, [selectedYear]);
 
-  // Send message to parents of selected year
+  // Send text message to parents of selected year
   const sendMessage = async () => {
     if (currentMessage.trim() === '' || !selectedYear) return;
     
@@ -136,6 +139,7 @@ useEffect(() => {
         sender: 'Admin',
         senderId: currentUser.uid,
         timestamp: new Date().toISOString(),
+        type: 'text'
       };
       
       const messagesRef = database.ref(`admin_parent_messages/${selectedYear}`);
@@ -146,6 +150,116 @@ useEffect(() => {
     } catch (error) {
       console.error('Error sending message:', error);
       Alert.alert('Error', 'Unable to send message');
+    }
+  };
+
+  // Send image message
+  const sendImage = async (imageUri) => {
+    if (!selectedYear) return;
+    
+    setImageLoading(true);
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        Alert.alert('Authentication Error', 'Please log in first');
+        return;
+      }
+
+      const newMessage = {
+        imageUri: imageUri,
+        sender: 'Admin',
+        senderId: currentUser.uid,
+        timestamp: new Date().toISOString(),
+        type: 'image'
+      };
+      
+      const messagesRef = database.ref(`admin_parent_messages/${selectedYear}`);
+      const newMessageRef = messagesRef.push();
+      
+      await newMessageRef.set(newMessage);
+      Alert.alert('Success', 'Image sent successfully!');
+      
+    } catch (error) {
+      console.error('Error sending image:', error);
+      Alert.alert('Error', 'Failed to send image. Please try again.');
+    } finally {
+      setImageLoading(false);
+    }
+  };
+
+  // Show image picker options
+  const showImagePicker = () => {
+    Alert.alert(
+      'Add Image',
+      'Choose an option',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Take Photo', 
+          onPress: () => openCamera()
+        },
+        { 
+          text: 'Choose from Library', 
+          onPress: () => openGallery()
+        }
+      ]
+    );
+  };
+
+  // Open camera
+  const openCamera = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        await sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening camera:', error);
+      Alert.alert('Error', 'Failed to open camera. Please try again.');
+    }
+  };
+
+  // Open gallery
+  const openGallery = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Gallery permission is required to select photos.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+        selectionLimit: 1,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        await sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening gallery:', error);
+      Alert.alert('Error', 'Failed to open gallery. Please try again.');
     }
   };
   
@@ -166,7 +280,20 @@ useEffect(() => {
           styles.messageBubble,
           item.sender === 'Parent' && styles.parentMessageBubble
         ]}>
-          <Text style={styles.messageText}>{item.text}</Text>
+          {item.type === 'image' ? (
+            <Image 
+              source={{ uri: item.imageUri }} 
+              style={styles.messageImage}
+              resizeMode="cover"
+            />
+          ) : (
+            <Text style={[
+              styles.messageText,
+              item.sender === 'Parent' && styles.parentMessageText
+            ]}>
+              {item.text}
+            </Text>
+          )}
         </View>
         <Text style={styles.messageTime}>
           {item.sender === 'Parent' ? 'Parent' : 'You'} • 
@@ -247,6 +374,19 @@ useEffect(() => {
             )}
             
             <View style={styles.inputContainer}>
+              {/* Image picker button */}
+              <TouchableOpacity
+                style={styles.imageButton}
+                onPress={showImagePicker}
+                disabled={imageLoading}
+              >
+                <MaterialIcons 
+                  name="camera-alt" 
+                  size={24} 
+                  color={imageLoading ? "#B0BEC5" : "#4a6fa5"} 
+                />
+              </TouchableOpacity>
+
               <TextInput
                 style={styles.input}
                 value={currentMessage}
@@ -254,17 +394,22 @@ useEffect(() => {
                 placeholder={`Message to ${years.find(y => y.id === selectedYear)?.title}`}
                 placeholderTextColor="#999"
                 multiline
+                editable={!imageLoading}
               />
               <TouchableOpacity 
                 style={styles.sendButton} 
                 onPress={sendMessage}
-                disabled={currentMessage.trim() === ''}
+                disabled={(currentMessage.trim() === '' && !imageLoading) || imageLoading}
               >
-                <Ionicons 
-                  name="send" 
-                  size={24} 
-                  color={currentMessage.trim() === '' ? '#b8c7d9' : 'white'} 
-                />
+                {imageLoading ? (
+                  <ActivityIndicator size={20} color="#B0BEC5" />
+                ) : (
+                  <Ionicons 
+                    name="send" 
+                    size={24} 
+                    color={currentMessage.trim() === '' ? '#b8c7d9' : 'white'} 
+                  />
+                )}
               </TouchableOpacity>
             </View>
           </KeyboardAvoidingView>
@@ -398,6 +543,14 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
   },
+  parentMessageText: {
+    color: '#333',
+  },
+  messageImage: {
+    width: 200,
+    height: 150,
+    borderRadius: 8,
+  },
   messageTime: {
     fontSize: 12,
     color: '#777',
@@ -412,6 +565,14 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#eee',
     alignItems: 'flex-end',
+  },
+  imageButton: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 40,
+    height: 40,
+    marginRight: 8,
+    borderRadius: 20,
   },
   input: {
     flex: 1,

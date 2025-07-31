@@ -12,13 +12,16 @@ import {
   Platform,
   Modal,
   ActivityIndicator,
-  Alert
+  Alert,
+  Image,
+  Keyboard
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons'; 
 import { firebase, database } from './firebase';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import ParentsTeacherChat from './ParentsTeacherChat';
 import { useNavigation } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 
 const Tab = createBottomTabNavigator();
 
@@ -35,6 +38,7 @@ const AdminChatScreen = ({ route }) => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [imageLoading, setImageLoading] = useState(false);
   const [profileModalVisible, setProfileModalVisible] = useState(false);
   const [studentData, setStudentData] = useState(null);
   const [parentData, setParentData] = useState(null);
@@ -100,6 +104,22 @@ const AdminChatScreen = ({ route }) => {
     
     fetchStudentData();
   }, [prn]);
+
+  // Auto-scroll when keyboard appears
+  useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => {
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 300);
+      }
+    );
+
+    return () => {
+      keyboardDidShowListener.remove();
+    };
+  }, []);
   
   // Send a new message (without saving to Firebase)
   const sendMessage = () => {
@@ -111,7 +131,8 @@ const AdminChatScreen = ({ route }) => {
         text: newMessage.trim(),
         isAdmin: false,
         timestamp: new Date().toISOString(),
-        read: false
+        read: false,
+        type: 'text'
       };
       
       setMessages(prevMessages => [...prevMessages, newMessageObj]);
@@ -127,6 +148,121 @@ const AdminChatScreen = ({ route }) => {
       console.error('Error handling message:', error);
     }
   };
+
+  // Send image message
+  const sendImage = async (imageUri) => {
+    if (!studentData) return;
+    
+    setImageLoading(true);
+    try {
+      const newMessageObj = {
+        id: Date.now().toString(),
+        imageUri: imageUri,
+        isAdmin: false,
+        timestamp: new Date().toISOString(),
+        read: false,
+        type: 'image'
+      };
+      
+      setMessages(prevMessages => [...prevMessages, newMessageObj]);
+      
+      // Scroll to bottom after sending
+      setTimeout(() => {
+        if (flatListRef.current) {
+          flatListRef.current.scrollToEnd({ animated: true });
+        }
+      }, 200);
+      
+      // Show success feedback
+      Alert.alert('Success', 'Image sent successfully!');
+      
+    } catch (error) {
+      console.error('Error sending image:', error);
+      Alert.alert('Error', 'Failed to send image. Please try again.');
+    } finally {
+      setImageLoading(false);
+    }
+  };
+
+  // Show image picker options
+  const showImagePicker = () => {
+    Alert.alert(
+      'Add Image',
+      'Choose an option',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Take Photo', 
+          onPress: () => openCamera()
+        },
+        { 
+          text: 'Choose from Library', 
+          onPress: () => openGallery()
+        }
+      ]
+    );
+  };
+
+  // Open camera
+  const openCamera = async () => {
+    try {
+      // Request camera permissions
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+        return;
+      }
+
+      // Launch camera
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        await sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening camera:', error);
+      Alert.alert('Error', 'Failed to open camera. Please try again.');
+    }
+  };
+
+  // Open gallery
+  const openGallery = async () => {
+    try {
+      // Request media library permissions
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Gallery permission is required to select photos.');
+        return;
+      }
+
+      // Launch image library
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+        selectionLimit: 1,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        await sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening gallery:', error);
+      Alert.alert('Error', 'Failed to open gallery. Please try again.');
+    }
+  };
   
   // Render a message item
   const renderMessageItem = ({ item }) => {
@@ -140,7 +276,13 @@ const AdminChatScreen = ({ route }) => {
         isParent ? styles.parentMessage : styles.teacherMessage
       ]}>
         {!isParent && <Text style={styles.senderName}>Admin</Text>}
-        <Text style={styles.messageText}>{item.text}</Text>
+        
+        {item.type === 'image' ? (
+          <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
+        ) : (
+          <Text style={styles.messageText}>{item.text}</Text>
+        )}
+        
         <View style={styles.messageFooter}>
           <Text style={styles.messageTime}>{formattedTime}</Text>
           {isParent && (
@@ -317,27 +459,47 @@ const AdminChatScreen = ({ route }) => {
               ? { flex: 1, justifyContent: 'center' } 
               : { paddingVertical: 16 }
           }
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
         
         {/* Message Input */}
         <View style={styles.inputContainer}>
+          <TouchableOpacity
+            style={styles.imageButton}
+            onPress={showImagePicker}
+            disabled={imageLoading}
+          >
+            <MaterialIcons 
+              name="camera-alt" 
+              size={24} 
+              color={imageLoading ? "#B0BEC5" : "#2196F3"} 
+            />
+          </TouchableOpacity>
+          
           <TextInput
             style={styles.textInput}
             placeholder="Type a message..."
             value={newMessage}
             onChangeText={setNewMessage}
             multiline
+            editable={!imageLoading}
           />
+          
           <TouchableOpacity 
             style={styles.sendButton}
             onPress={sendMessage}
-            disabled={newMessage.trim() === ''}
+            disabled={newMessage.trim() === '' || imageLoading}
           >
-            <MaterialIcons 
-              name="send" 
-              size={24} 
-              color={newMessage.trim() === '' ? '#B0BEC5' : '#2196F3'} 
-            />
+            {imageLoading ? (
+              <ActivityIndicator size={20} color="#B0BEC5" />
+            ) : (
+              <MaterialIcons 
+                name="send" 
+                size={24} 
+                color={newMessage.trim() === '' ? '#B0BEC5' : '#2196F3'} 
+              />
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -470,6 +632,13 @@ const styles = StyleSheet.create({
     color: '#333',
     fontSize: 16,
   },
+  messageImage: {
+    width: 200,
+    height: 150,
+    borderRadius: 8,
+    resizeMode: 'cover',
+    marginBottom: 5,
+  },
   messageFooter: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -491,6 +660,13 @@ const styles = StyleSheet.create({
     borderTopColor: '#E0E0E0',
     alignItems: 'center',
   },
+  imageButton: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    height: 40,
+    marginRight: 8,
+  },
   textInput: {
     flex: 1,
     backgroundColor: '#F5F5F5',
@@ -498,6 +674,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     maxHeight: 100,
+    marginRight: 8,
   },
   sendButton: {
     width: 40,
@@ -505,7 +682,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 8,
   },
   modalOverlay: {
     flex: 1,

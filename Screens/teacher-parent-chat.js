@@ -9,9 +9,14 @@ import {
   SafeAreaView, 
   KeyboardAvoidingView,
   Platform,
-  Image
+  Image,
+  Alert,
+  Dimensions
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+
+const { width } = Dimensions.get('window');
 
 const StudentChatScreen = () => {
   const [messages, setMessages] = useState([
@@ -21,13 +26,15 @@ const StudentChatScreen = () => {
       sender: 'student',
       time: '10:30 AM',
       studentName: 'Emma Watson',
-      studentAvatar: 'https://randomuser.me/api/portraits/women/12.jpg'
+      studentAvatar: 'https://randomuser.me/api/portraits/women/12.jpg',
+      type: 'text'
     },
     {
       id: '2',
       text: 'Hi Emma! What would you like to know?',
       sender: 'teacher',
-      time: '10:32 AM'
+      time: '10:32 AM',
+      type: 'text'
     },
     {
       id: '3',
@@ -35,11 +42,13 @@ const StudentChatScreen = () => {
       sender: 'student',
       time: '10:33 AM',
       studentName: 'Emma Watson',
-      studentAvatar: 'https://randomuser.me/api/portraits/women/12.jpg'
+      studentAvatar: 'https://randomuser.me/api/portraits/women/12.jpg',
+      type: 'text'
     },
   ]);
   
   const [newMessage, setNewMessage] = useState('');
+  const [loading, setLoading] = useState(false);
   const flatListRef = useRef(null);
 
   const handleSend = () => {
@@ -49,11 +58,113 @@ const StudentChatScreen = () => {
       id: Date.now().toString(),
       text: newMessage,
       sender: 'teacher',
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      type: 'text'
     };
     
     setMessages([...messages, message]);
     setNewMessage('');
+  };
+
+  const sendImage = async (imageUri) => {
+    setLoading(true);
+    try {
+      const message = {
+        id: Date.now().toString(),
+        imageUri: imageUri,
+        sender: 'teacher',
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        type: 'image'
+      };
+      
+      setMessages(prevMessages => [...prevMessages, message]);
+      
+      // Show success feedback
+      Alert.alert('Success', 'Image sent successfully!');
+      
+    } catch (error) {
+      console.error('Error sending image:', error);
+      Alert.alert('Error', 'Failed to send image. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const showImagePicker = () => {
+    Alert.alert(
+      'Add Image',
+      'Choose an option',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Take Photo', 
+          onPress: () => openCamera()
+        },
+        { 
+          text: 'Choose from Library', 
+          onPress: () => openGallery()
+        }
+      ]
+    );
+  };
+
+  const openCamera = async () => {
+    try {
+      // Request camera permissions
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Camera permission is required to take photos.');
+        return;
+      }
+
+      // Launch camera
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        await sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening camera:', error);
+      Alert.alert('Error', 'Failed to open camera. Please try again.');
+    }
+  };
+
+  const openGallery = async () => {
+    try {
+      // Request media library permissions
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Gallery permission is required to select photos.');
+        return;
+      }
+
+      // Launch image library
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        allowsMultipleSelection: false,
+        base64: false,
+        exif: false,
+        selectionLimit: 1,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        await sendImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error opening gallery:', error);
+      Alert.alert('Error', 'Failed to open gallery. Please try again.');
+    }
   };
 
   useEffect(() => {
@@ -83,9 +194,13 @@ const StudentChatScreen = () => {
           styles.messageBubble,
           isTeacher ? styles.teacherBubble : styles.studentBubble
         ]}>
-          <Text style={isTeacher ? styles.teacherText : styles.studentText}>
-            {item.text}
-          </Text>
+          {item.type === 'image' ? (
+            <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
+          ) : (
+            <Text style={isTeacher ? styles.teacherText : styles.studentText}>
+              {item.text}
+            </Text>
+          )}
         </View>
         <Text style={styles.timeText}>{item.time}</Text>
       </View>
@@ -114,17 +229,40 @@ const StudentChatScreen = () => {
         />
         
         <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            value={newMessage}
-            onChangeText={setNewMessage}
-            placeholder="Type your message..."
-            placeholderTextColor="#999"
-            multiline
-          />
-          <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
-            <Ionicons name="send" size={24} color="#fff" />
-          </TouchableOpacity>
+          <View style={styles.inputWrapper}>
+            <TouchableOpacity
+              style={styles.imageButton}
+              onPress={showImagePicker}
+              disabled={loading}
+            >
+              <Ionicons name="camera" size={24} color="#4a8cff" />
+            </TouchableOpacity>
+            
+            <TextInput
+              style={styles.input}
+              value={newMessage}
+              onChangeText={setNewMessage}
+              placeholder="Type your message..."
+              placeholderTextColor="#999"
+              multiline
+              editable={!loading}
+            />
+            
+            <TouchableOpacity 
+              style={[
+                styles.sendButton,
+                (!newMessage.trim() || loading) && styles.sendButtonDisabled
+              ]} 
+              onPress={handleSend}
+              disabled={!newMessage.trim() || loading}
+            >
+              {loading ? (
+                <Ionicons name="hourglass" size={24} color="#fff" />
+              ) : (
+                <Ionicons name="send" size={24} color="#fff" />
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -203,37 +341,59 @@ const styles = StyleSheet.create({
     color: '#333',
     fontSize: 16,
   },
+  messageImage: {
+    width: 200,
+    height: 150,
+    borderRadius: 8,
+    resizeMode: 'cover',
+  },
   timeText: {
     fontSize: 12,
     color: '#888',
   },
   inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 8,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: '#f0f0f0',
+    borderRadius: 24,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  imageButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
   },
   input: {
     flex: 1,
-    minHeight: 48,
+    minHeight: 36,
     maxHeight: 120,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 24,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
     fontSize: 16,
     color: '#333',
-    marginRight: 8,
   },
   sendButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#4a8cff',
     justifyContent: 'center',
     alignItems: 'center',
+    marginLeft: 8,
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#ccc',
   },
 });
 
