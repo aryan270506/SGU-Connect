@@ -10,16 +10,17 @@ import {
   TextInput,
   Alert,
   Animated,
-  Dimensions
+  Dimensions,
+  Modal
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import { getDatabase, ref, get } from 'firebase/database';
 import { initializeApp } from 'firebase/app';
 import { LinearGradient } from 'expo-linear-gradient';
+import DataPreloader from './datapreloderstudent.js'; // Import our data preloader
 
 const { width } = Dimensions.get('window');
 
@@ -44,6 +45,11 @@ const StudentLoginScreen = () => {
   const [rollNumber, setRollNumber] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  // Data loading states
+  const [showDataLoader, setShowDataLoader] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingMessage, setLoadingMessage] = useState('');
 
   // Animation values
   const fadeAnim = useState(new Animated.Value(0))[0];
@@ -94,6 +100,27 @@ const StudentLoginScreen = () => {
         }),
       ])
     ]).start();
+
+    // Setup data preloader progress listener
+    const progressListener = ({ step, total, progress, message, isComplete }) => {
+      setLoadingProgress(progress);
+      setLoadingMessage(message);
+      
+      if (isComplete) {
+        setTimeout(() => {
+          setShowDataLoader(false);
+          // Navigate to dashboard after data is loaded
+          navigation.navigate('StudentDashboard');
+        }, 500);
+      }
+    };
+
+    DataPreloader.addProgressListener(progressListener);
+
+    // Cleanup listener on unmount
+    return () => {
+      DataPreloader.removeProgressListener(progressListener);
+    };
   }, []);
 
   const checkExistingSession = async () => {
@@ -102,22 +129,21 @@ const StudentLoginScreen = () => {
       const userRole = await AsyncStorage.getItem('userRole');
       
       if (userData && userRole === 'student') {
-        // User is already logged in, navigate to dashboard
-        navigation.navigate('StudentDashboard', {
-          studentData: JSON.parse(userData)
-        });
+        // Check if data is fresh
+        const isDataFresh = await DataPreloader.isDataFresh();
+        
+        if (isDataFresh) {
+          // Data is fresh, navigate directly
+          navigation.navigate('StudentDashboard');
+        } else {
+          // Data is stale, refresh it
+          const studentData = JSON.parse(userData);
+          setShowDataLoader(true);
+          await DataPreloader.refreshData(studentData);
+        }
       }
     } catch (error) {
       console.error('Error checking existing session:', error);
-    }
-  };
-
-  const saveUserSession = async (studentData) => {
-    try {
-      await AsyncStorage.setItem('userData', JSON.stringify(studentData));
-      await AsyncStorage.setItem('userRole', 'student');
-    } catch (error) {
-      console.error('Error saving user session:', error);
     }
   };
 
@@ -130,8 +156,7 @@ const StudentLoginScreen = () => {
     setLoading(true);
 
     try {
-      // In your database, the students are stored with numeric indices (0, 1, etc.)
-      // We need to search through all students to find the one with matching PRN
+      // Search for student in database
       const studentsRef = ref(db, 'students');
       const snapshot = await get(studentsRef);
       
@@ -150,7 +175,7 @@ const StudentLoginScreen = () => {
         if (data.PRN === rollNumber) {
           foundStudent = data;
           studentKey = childSnapshot.key;
-          return true; // Break the forEach loop
+          return true;
         }
       });
       
@@ -160,18 +185,17 @@ const StudentLoginScreen = () => {
         return;
       }
 
-      // Check if password matches
+      // Check password
       if (password !== foundStudent.password) {
         Alert.alert('Error', 'Invalid password. Please try again.');
         setLoading(false);
         return;
       }
 
-      // If password matches, try to authenticate with Firebase Auth
+      // Authenticate with Firebase Auth
       try {
         await signInWithEmailAndPassword(auth, foundStudent.Email, password);
       } catch (loginError) {
-        // If user doesn't exist in Auth (first login), create the account
         try {
           await createUserWithEmailAndPassword(auth, foundStudent.Email, password);
         } catch (createError) {
@@ -192,17 +216,16 @@ const StudentLoginScreen = () => {
         password: password
       };
 
-      // Save session data
-      await saveUserSession(studentData);
-
-      // Login successful, navigate to dashboard with student data
-      navigation.navigate('StudentDashboard', {
-        studentData: studentData
-      });
+      setLoading(false);
+      
+      // Show data loader and start preloading
+      setShowDataLoader(true);
+      
+      // Start data preloading in background
+      await DataPreloader.preloadAllData(studentData);
       
     } catch (error) {
       Alert.alert('Error', 'Login failed: ' + error.message);
-    } finally {
       setLoading(false);
     }
   };
@@ -230,6 +253,50 @@ const StudentLoginScreen = () => {
       pulseAnim.setValue(1);
     }
   }, [loading]);
+
+  // Data Loading Modal Component
+  const DataLoadingModal = () => (
+    <Modal
+      visible={showDataLoader}
+      transparent={true}
+      animationType="fade"
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.loadingModalContainer}>
+          <LinearGradient
+            colors={['#0F2027', '#203A43', '#2C5364']}
+            style={styles.loadingModalGradient}
+          >
+            <View style={styles.loadingContent}>
+              <Icon name="school-outline" size={60} color="#64FFDA" />
+              <Text style={styles.loadingTitle}>Setting up your dashboard</Text>
+              <Text style={styles.loadingSubtitle}>{loadingMessage}</Text>
+              
+              {/* Progress Bar */}
+              <View style={styles.progressBarContainer}>
+                <View style={styles.progressBarBackground}>
+                  <Animated.View 
+                    style={[
+                      styles.progressBarFill,
+                      { width: `${loadingProgress}%` }
+                    ]}
+                  />
+                </View>
+                <Text style={styles.progressText}>{Math.round(loadingProgress)}%</Text>
+              </View>
+              
+              {/* Loading Animation */}
+              <View style={styles.loadingDotsContainer}>
+                <View style={[styles.loadingDot, styles.loadingDot1]} />
+                <View style={[styles.loadingDot, styles.loadingDot2]} />
+                <View style={[styles.loadingDot, styles.loadingDot3]} />
+              </View>
+            </View>
+          </LinearGradient>
+        </View>
+      </View>
+    </Modal>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -401,6 +468,9 @@ const StudentLoginScreen = () => {
           </Text>
         </Animated.View>
       </LinearGradient>
+
+      {/* Data Loading Modal */}
+      <DataLoadingModal />
     </SafeAreaView>
   );
 };
@@ -537,7 +607,7 @@ const styles = StyleSheet.create({
   },
   spinIcon: {
     marginRight: 10,
-    transform: [{ rotate: '0deg' }],  // Will be animated in the component
+    transform: [{ rotate: '0deg' }],
   },
   loginButtonText: {
     color: '#FFFFFF',
@@ -559,7 +629,93 @@ const styles = StyleSheet.create({
     color: '#64FFDA60',
     fontSize: 12,
     fontFamily: 'monospace',
-  }
+  },
+  // Data Loading Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingModalContainer: {
+    width: width * 0.85,
+    borderRadius: 20,
+    overflow: 'hidden',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+  },
+  loadingModalGradient: {
+    padding: 30,
+    alignItems: 'center',
+  },
+  loadingContent: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  loadingTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    marginTop: 20,
+    marginBottom: 10,
+    textAlign: 'center',
+    fontFamily: 'monospace',
+  },
+  loadingSubtitle: {
+    fontSize: 14,
+    color: '#64FFDA',
+    textAlign: 'center',
+    marginBottom: 30,
+    fontFamily: 'monospace',
+  },
+  progressBarContainer: {
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 30,
+  },
+  progressBarBackground: {
+    width: '100%',
+    height: 8,
+    backgroundColor: 'rgba(100, 255, 218, 0.2)',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 10,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#64FFDA',
+    borderRadius: 4,
+  },
+  progressText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontFamily: 'monospace',
+    fontWeight: 'bold',
+  },
+  loadingDotsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#64FFDA',
+    marginHorizontal: 4,
+  },
+  loadingDot1: {
+    opacity: 0.4,
+  },
+  loadingDot2: {
+    opacity: 0.7,
+  },
+  loadingDot3: {
+    opacity: 1,
+  },
 });
 
 export default StudentLoginScreen;

@@ -35,6 +35,8 @@ const AdminTeacherChat = () => {
   const [currentMessage, setCurrentMessage] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('connected');
   const [imageLoading, setImageLoading] = useState(false);
+  const [isLoadingTeachers, setIsLoadingTeachers] = useState(true);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [teacherGroups, setTeacherGroups] = useState({
     'All Teachers': [],
     '1st Year': [],
@@ -43,6 +45,26 @@ const AdminTeacherChat = () => {
   });
   
   const flatListRef = useRef(null);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(50)).current;
+
+  // Animation for smooth transitions
+  useEffect(() => {
+    if (!isLoadingTeachers) {
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [isLoadingTeachers]);
 
   // Generate a unique ID for messages
   const generateId = () => Math.random().toString(36).substring(2, 9);
@@ -63,49 +85,61 @@ const AdminTeacherChat = () => {
     };
   }, []);
   
-  // Fetch teachers from Firebase
+  // Fetch teachers from Firebase with loading state
   useEffect(() => {
     const teachersRef = ref(database, 'Faculty');
+    setIsLoadingTeachers(true);
     
     const fetchTeachers = onValue(teachersRef, (snapshot) => {
-      const teachersData = snapshot.val();
-      const allTeachers = [];
-      const firstYearTeachers = [];
-      const secondYearTeachers = [];
-      const thirdYearTeachers = [];
-      
-      if (teachersData) {
-        Object.keys(teachersData).forEach(key => {
-          const teacher = teachersData[key];
-          const teacherObj = {
-            id: teacher.employee_id,
-            name: teacher.name,
-            year: teacher.years ? teacher.years.e || '1st Year' : '1st Year',
-            subjects: teacher.subjects ? teacher.subjects.e : '',
-            division: teacher.divisions ? teacher.divisions.e : 'A'
-          };
-          
-          allTeachers.push(teacherObj);
-          
-          if (teacherObj.year.includes('1st')) {
-            firstYearTeachers.push(teacherObj);
-          } else if (teacherObj.year.includes('2nd')) {
-            secondYearTeachers.push(teacherObj);
-          } else if (teacherObj.year.includes('3rd')) {
-            thirdYearTeachers.push(teacherObj);
-          }
+      try {
+        const teachersData = snapshot.val();
+        const allTeachers = [];
+        const firstYearTeachers = [];
+        const secondYearTeachers = [];
+        const thirdYearTeachers = [];
+        
+        if (teachersData) {
+          Object.keys(teachersData).forEach(key => {
+            const teacher = teachersData[key];
+            const teacherObj = {
+              id: teacher.employee_id,
+              name: teacher.name,
+              year: teacher.years ? teacher.years.e || '1st Year' : '1st Year',
+              subjects: teacher.subjects ? teacher.subjects.e : '',
+              division: teacher.divisions ? teacher.divisions.e : 'A'
+            };
+            
+            allTeachers.push(teacherObj);
+            
+            if (teacherObj.year.includes('1st')) {
+              firstYearTeachers.push(teacherObj);
+            } else if (teacherObj.year.includes('2nd')) {
+              secondYearTeachers.push(teacherObj);
+            } else if (teacherObj.year.includes('3rd')) {
+              thirdYearTeachers.push(teacherObj);
+            }
+          });
+        }
+        
+        setTeacherGroups({
+          'All Teachers': allTeachers,
+          '1st Year': firstYearTeachers,
+          '2nd Year': secondYearTeachers,
+          '3rd Year': thirdYearTeachers,
         });
+        
+        setConnectionStatus('connected');
+        setIsLoadingTeachers(false);
+        
+      } catch (error) {
+        console.error('Error processing teachers data:', error);
+        setConnectionStatus('error');
+        setIsLoadingTeachers(false);
       }
-      
-      setTeacherGroups({
-        'All Teachers': allTeachers,
-        '1st Year': firstYearTeachers,
-        '2nd Year': secondYearTeachers,
-        '3rd Year': thirdYearTeachers,
-      });
     }, (error) => {
       console.error('Error fetching teachers:', error);
       setConnectionStatus('error');
+      setIsLoadingTeachers(false);
     });
     
     return () => {
@@ -113,40 +147,50 @@ const AdminTeacherChat = () => {
     };
   }, []);
 
-  // Listen for messages when group is selected (not for individual teachers)
+  // Listen for messages when group is selected with loading state
   useEffect(() => {
     if (!selectedGroup) return;
     
+    setIsLoadingMessages(true);
     const year = selectedGroup.split(' ')[0];
     const messagesRef = ref(database, `chats/year_${year}`);
     const messagesQuery = query(messagesRef, orderByChild('timestamp'));
     
     const unsubscribe = onValue(messagesQuery, (snapshot) => {
-      const messagesData = snapshot.val();
-      const formattedMessages = [];
-      
-      if (messagesData) {
-        Object.keys(messagesData).forEach(key => {
-          const msg = messagesData[key];
-          formattedMessages.push({
-            id: key,
-            text: msg.text,
-            imageUri: msg.imageUri,
-            type: msg.type || 'text',
-            sender: msg.sender,
-            timestamp: new Date(msg.timestamp),
+      try {
+        const messagesData = snapshot.val();
+        const formattedMessages = [];
+        
+        if (messagesData) {
+          Object.keys(messagesData).forEach(key => {
+            const msg = messagesData[key];
+            formattedMessages.push({
+              id: key,
+              text: msg.text,
+              imageUri: msg.imageUri,
+              type: msg.type || 'text',
+              sender: msg.sender,
+              timestamp: new Date(msg.timestamp),
+            });
           });
-        });
+        }
+        
+        const chatKey = getCurrentChatKey();
+        setMessages(prev => ({
+          ...prev,
+          [chatKey]: formattedMessages,
+        }));
+        
+        setIsLoadingMessages(false);
+        
+      } catch (error) {
+        console.error('Error processing messages:', error);
+        setIsLoadingMessages(false);
       }
-      
-      const chatKey = getCurrentChatKey();
-      setMessages(prev => ({
-        ...prev,
-        [chatKey]: formattedMessages,
-      }));
     }, (error) => {
       console.error('Error fetching messages:', error);
       setConnectionStatus('error');
+      setIsLoadingMessages(false);
     });
     
     return () => {
@@ -159,18 +203,15 @@ const AdminTeacherChat = () => {
     const chatKey = getCurrentChatKey();
     
     if (selectedTeacher) {
-      // For teacher chats - remove from local state only
       setMessages(prev => ({
         ...prev,
         [chatKey]: prev[chatKey]?.filter(msg => msg.id !== messageId) || [],
       }));
     } else if (selectedGroup) {
-      // For group chats - remove from Firebase
       try {
         const year = selectedGroup.split(' ')[0];
         const messageRef = ref(database, `chats/year_${year}/${messageId}`);
         await remove(messageRef);
-        // The Firebase listener will automatically update the local state
       } catch (error) {
         console.error('Error deleting message from Firebase:', error);
         Alert.alert('Error', 'Failed to delete message');
@@ -180,7 +221,6 @@ const AdminTeacherChat = () => {
 
   // Handle long press on message
   const handleMessageLongPress = (message) => {
-    // Only allow admin to delete their own messages
     if (message.sender !== 'Admin') {
       return;
     }
@@ -216,20 +256,18 @@ const AdminTeacherChat = () => {
     };
 
     if (selectedTeacher) {
-      // For teacher chats - store locally only
       setMessages(prev => ({
         ...prev,
         [chatKey]: [...(prev[chatKey] || []), newMessage],
       }));
     } else if (selectedGroup) {
-      // For group chats - send to Firebase
       try {
         const year = selectedGroup.split(' ')[0];
         const messagesRef = ref(database, `chats/year_${year}`);
         const newMessageRef = push(messagesRef);
         await set(newMessageRef, {
           ...newMessage,
-          timestamp: newMessage.timestamp.getTime(), // Convert to timestamp number
+          timestamp: newMessage.timestamp.getTime(),
         });
       } catch (error) {
         console.error('Error sending message:', error);
@@ -240,7 +278,6 @@ const AdminTeacherChat = () => {
     
     setCurrentMessage('');
     
-    // Scroll to bottom after sending message
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 200);
@@ -260,13 +297,11 @@ const AdminTeacherChat = () => {
       };
 
       if (selectedTeacher) {
-        // For teacher chats - store locally only
         setMessages(prev => ({
           ...prev,
           [chatKey]: [...(prev[chatKey] || []), newMessage],
         }));
       } else if (selectedGroup) {
-        // For group chats - send to Firebase
         try {
           const year = selectedGroup.split(' ')[0];
           const messagesRef = ref(database, `chats/year_${year}`);
@@ -282,7 +317,6 @@ const AdminTeacherChat = () => {
         }
       }
       
-      // Scroll to bottom after sending
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 200);
@@ -398,26 +432,73 @@ const AdminTeacherChat = () => {
     setSelectedGroup(null);
   };
 
+  // Render skeleton loader for teacher items
+  const renderTeacherSkeleton = () => (
+    <View style={styles.skeletonContainer}>
+      {[...Array(8)].map((_, index) => (
+        <View key={index} style={styles.skeletonTeacherItem}>
+          <View style={styles.skeletonAvatar} />
+          <View style={styles.skeletonTextContainer}>
+            <View style={styles.skeletonName} />
+            <View style={styles.skeletonSubject} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+
   // Render teacher item
-  const renderTeacherItem = ({ item }) => (
-    <TouchableOpacity 
-      style={styles.teacherItem}
-      onPress={() => {
-        setSelectedTeacher(item);
-        setSelectedGroup(null);
-        // Initialize empty messages array for this teacher if not exists
-        if (!messages[item.id]) {
-          setMessages(prev => ({ ...prev, [item.id]: [] }));
-        }
-      }}
+  const renderTeacherItem = ({ item, index }) => (
+    <Animated.View
+      style={[
+        styles.teacherItemContainer,
+        {
+          opacity: fadeAnim,
+          transform: [
+            {
+              translateY: slideAnim.interpolate({
+                inputRange: [0, 50],
+                outputRange: [0, 50],
+              }),
+            },
+          ],
+        },
+      ]}
     >
-      <View style={styles.teacherAvatar}>
-        <Text style={styles.teacherInitial}>{item.name.charAt(0)}</Text>
+      <TouchableOpacity 
+        style={styles.teacherItem}
+        onPress={() => {
+          setSelectedTeacher(item);
+          setSelectedGroup(null);
+          if (!messages[item.id]) {
+            setMessages(prev => ({ ...prev, [item.id]: [] }));
+          }
+        }}
+      >
+        <View style={styles.teacherAvatar}>
+          <Text style={styles.teacherInitial}>{item.name.charAt(0)}</Text>
+        </View>
+        <View style={styles.teacherInfo}>
+          <Text style={styles.teacherName}>{item.name}</Text>
+          <Text style={styles.teacherSubject}>{item.subjects || 'Faculty'}</Text>
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+
+  // Render message loading skeleton
+  const renderMessageSkeleton = () => (
+    <View style={styles.messageSkeletonContainer}>
+      <View style={styles.receivedMessageSkeleton}>
+        <View style={styles.skeletonMessageBubble} />
       </View>
-      <View style={styles.teacherInfo}>
-        <Text style={styles.teacherName}>{item.name}</Text>
+      <View style={styles.sentMessageSkeleton}>
+        <View style={styles.skeletonMessageBubble} />
       </View>
-    </TouchableOpacity>
+      <View style={styles.receivedMessageSkeleton}>
+        <View style={styles.skeletonMessageBubble} />
+      </View>
+    </View>
   );
 
   // Render message item
@@ -468,7 +549,7 @@ const AdminTeacherChat = () => {
     );
   };
 
-  // Get current chat key (teacher id or group name)
+  // Get current chat key
   const getCurrentChatKey = () => {
     if (selectedTeacher) return selectedTeacher.id;
     if (selectedGroup) return selectedGroup;
@@ -489,6 +570,30 @@ const AdminTeacherChat = () => {
     return 'Type a message';
   };
 
+  // Main loading screen
+  if (isLoadingTeachers && teacherGroups['All Teachers'].length === 0) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar backgroundColor="#4a6fa5" barStyle="light-content" />
+        <View style={styles.loadingContainer}>
+          <View style={styles.loadingHeader}>
+            <Ionicons name="people" size={60} color="#4a6fa5" />
+            <Text style={styles.loadingTitle}>Loading Teachers</Text>
+            <Text style={styles.loadingSubtitle}>Please wait while we fetch teacher data...</Text>
+          </View>
+          <View style={styles.loadingIndicatorContainer}>
+            <ActivityIndicator size="large" color="#4a6fa5" />
+          </View>
+          <View style={styles.loadingDots}>
+            <View style={styles.dot} />
+            <View style={styles.dot} />
+            <View style={styles.dot} />
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar backgroundColor="#4a6fa5" barStyle="light-content" />
@@ -503,6 +608,9 @@ const AdminTeacherChat = () => {
                 <Ionicons name="arrow-back" size={28} color="white" />
               </TouchableOpacity>
               <Text style={styles.headerTitle}>{getCurrentChatTitle()}</Text>
+              {isLoadingMessages && (
+                <ActivityIndicator size="small" color="white" style={styles.headerLoader} />
+              )}
             </>
           ) : (
             <>
@@ -510,34 +618,45 @@ const AdminTeacherChat = () => {
                 <Ionicons name="menu" size={28} color="white" />
               </TouchableOpacity>
               <Text style={styles.headerTitle}>{getCurrentChatTitle()}</Text>
+              {connectionStatus === 'error' && (
+                <Ionicons name="warning" size={24} color="#FF6B6B" />
+              )}
             </>
           )}
         </View>
         
         {!selectedTeacher && !selectedGroup ? (
           /* Teacher List View */
-         <FlatList
-          style={styles.teacherListContainer}
-          data={teacherGroups[activeSection]}
-          renderItem={renderTeacherItem}
-          keyExtractor={item => `teacher_${item.id}_${item.name}`} // Added name to ensure uniqueness
-          ListHeaderComponent={
-            <Text style={styles.teacherListHeader}>
-              {activeSection === 'All Teachers' 
-                ? `All Teachers (${teacherGroups[activeSection].length})` 
-                : `${activeSection} Teachers (${teacherGroups[activeSection].length})`}
-            </Text>
-          }
-        />
+          <View style={styles.teacherListContainer}>
+            {isLoadingTeachers ? (
+              renderTeacherSkeleton()
+            ) : (
+              <FlatList
+                data={teacherGroups[activeSection]}
+                renderItem={renderTeacherItem}
+                keyExtractor={item => `teacher_${item.id}_${item.name}`}
+                ListHeaderComponent={
+                  <Text style={styles.teacherListHeader}>
+                    {activeSection === 'All Teachers' 
+                      ? `All Teachers (${teacherGroups[activeSection].length})` 
+                      : `${activeSection} Teachers (${teacherGroups[activeSection].length})`}
+                  </Text>
+                }
+                showsVerticalScrollIndicator={false}
+              />
+            )}
+          </View>
         ) : (
-          /* Chat View (Individual or Group) */
+          /* Chat View */
           <KeyboardAvoidingView
             style={styles.chatArea}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
           >
             {/* Messages List */}
-            {!messages[getCurrentChatKey()] || messages[getCurrentChatKey()].length === 0 ? (
+            {isLoadingMessages ? (
+              renderMessageSkeleton()
+            ) : !messages[getCurrentChatKey()] || messages[getCurrentChatKey()].length === 0 ? (
               <View style={styles.emptyStateContainer}>
                 <Ionicons name="chatbubble-ellipses-outline" size={80} color="#c5c5c5" />
                 <Text style={styles.emptyStateText}>No messages yet</Text>
@@ -562,16 +681,15 @@ const AdminTeacherChat = () => {
             
             {/* Message Input */}
             <View style={styles.inputContainer}>
-              {/* Image picker button */}
               <TouchableOpacity
                 style={styles.imageButton}
                 onPress={showImagePicker}
-                disabled={imageLoading}
+                disabled={imageLoading || isLoadingMessages}
               >
                 <MaterialIcons 
                   name="camera-alt" 
                   size={24} 
-                  color={imageLoading ? "#B0BEC5" : "#4a6fa5"} 
+                  color={imageLoading || isLoadingMessages ? "#B0BEC5" : "#4a6fa5"} 
                 />
               </TouchableOpacity>
 
@@ -583,13 +701,13 @@ const AdminTeacherChat = () => {
                 placeholderTextColor="#999"
                 multiline
                 maxHeight={100}
-                editable={!imageLoading}
+                editable={!imageLoading && !isLoadingMessages}
               />
               
               <TouchableOpacity 
                 style={styles.sendButton} 
                 onPress={sendMessage}
-                disabled={currentMessage.trim() === '' || imageLoading}
+                disabled={currentMessage.trim() === '' || imageLoading || isLoadingMessages}
               >
                 {imageLoading ? (
                   <ActivityIndicator size={20} color="#B0BEC5" />
@@ -597,7 +715,7 @@ const AdminTeacherChat = () => {
                   <Ionicons 
                     name="send" 
                     size={24} 
-                    color={currentMessage.trim() === '' ? '#ccc' : 'white'} 
+                    color={currentMessage.trim() === '' || isLoadingMessages ? '#ccc' : 'white'} 
                   />
                 )}
               </TouchableOpacity>
@@ -698,6 +816,104 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+  },
+  
+  // Loading Screen Styles
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f7fa',
+    paddingHorizontal: 40,
+  },
+  loadingHeader: {
+    alignItems: 'center',
+    marginBottom: 40,
+  },
+  loadingTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#4a6fa5',
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  loadingSubtitle: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  loadingIndicatorContainer: {
+    marginVertical: 30,
+  },
+  loadingDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#4a6fa5',
+    marginHorizontal: 4,
+    opacity: 0.6,
+  },
+  
+  // Skeleton Styles
+  skeletonContainer: {
+    padding: 16,
+  },
+  skeletonTeacherItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  skeletonAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#e0e0e0',
+    marginRight: 12,
+  },
+  skeletonTextContainer: {
+    flex: 1,
+  },
+  skeletonName: {
+    height: 16,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 8,
+    marginBottom: 6,
+    width: '60%',
+  },
+  skeletonSubject: {
+    height: 12,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 6,
+    width: '40%',
+  },
+  
+  // Message Skeleton Styles
+  messageSkeletonContainer: {
+    flex: 1,
+    padding: 16,
+  },
+  receivedMessageSkeleton: {
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  sentMessageSkeleton: {
+    alignItems: 'flex-end',
+    marginBottom: 16,
+  },
+  skeletonMessageBubble: {
+    height: 40,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 16,
+    width: '70%',
   },
   header: {
     backgroundColor: '#4a6fa5',

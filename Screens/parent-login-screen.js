@@ -16,6 +16,7 @@ import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { auth, database } from './firebase';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
@@ -81,6 +82,17 @@ const ParentLoginScreen = () => {
     setDebugInfo(prev => prev + "\n" + message);
   };
 
+  // Function to save session data
+  const saveSessionData = async (userData) => {
+    try {
+      await AsyncStorage.setItem('userData', JSON.stringify(userData));
+      await AsyncStorage.setItem('userRole', 'parent');
+      console.log('Parent session data saved successfully');
+    } catch (error) {
+      console.error('Error saving session data:', error);
+    }
+  };
+
   const handleLogin = async () => {
     if (!parentId || !password) {
       Alert.alert('Error', 'Please enter Parent ID and Password');
@@ -129,14 +141,25 @@ const ParentLoginScreen = () => {
               branch: parentData.branch || 'N/A',
               division: parentData.division || 'N/A',
               admissionYear: parentData.year || 'N/A',
+              parentId: cleanParentId,
+              parentPassword: cleanPassword,
               // Add any other fields that might be needed
             };
             
-            console.log("Navigating to ParentDashboard with student data:", JSON.stringify(studentData));
+            console.log("Saving session and navigating to ParentDashboard with student data:", JSON.stringify(studentData));
             
-            navigation.navigate('ParentDashboard', { 
-              studentData: studentData
-            });
+            // Save session data to AsyncStorage
+            // Save session data to AsyncStorage
+saveSessionData(studentData).then(() => {
+  navigation.reset({
+    index: 0,
+    routes: [{ 
+      name: 'ParentDashboard', 
+      params: { studentData: studentData } 
+    }]
+  });
+});
+
           }
         });
 

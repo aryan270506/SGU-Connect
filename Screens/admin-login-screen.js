@@ -15,6 +15,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { database } from './firebase';
 
 const { width } = Dimensions.get('window');
@@ -73,7 +74,40 @@ const AdminLoginScreen = () => {
     ]).start();
   }, []);
 
-  const handleLogin = () => {
+  // Store session data
+  const storeAdminSession = async (adminData) => {
+    try {
+      // Calculate session expiry (24 hours from now)
+      const expiryDate = new Date();
+      expiryDate.setHours(expiryDate.getHours() + 24);
+      
+      console.log('Storing admin session data:', adminData);
+      
+      // Store all session data
+      await AsyncStorage.multiSet([
+        ['userData', JSON.stringify(adminData)],
+        ['userRole', 'admin'],
+        ['sessionExpiry', expiryDate.toISOString()],
+        ['lastLoginTime', new Date().toISOString()],
+        // Store admin specific data
+        ['adminId', adminData.id],
+        ['adminName', adminData.name],
+        ['adminDepartment', adminData.department || ''],
+        ['adminEmployeeId', adminData.employee_id],
+        ['adminRole', adminData.role || 'Administrator']
+      ]);
+      
+      console.log('Admin session stored successfully');
+      console.log('Session expires at:', expiryDate.toISOString());
+      
+      return true;
+    } catch (error) {
+      console.error('Error storing admin session:', error);
+      return false;
+    }
+  };
+
+  const handleLogin = async () => {
     if (!adminName || !employeeId) {
       Alert.alert('Error', 'Please enter both name and employee ID');
       return;
@@ -81,55 +115,72 @@ const AdminLoginScreen = () => {
 
     setLoading(true);
     
-    // Reference to the admin collection in Firebase
-    const adminRef = database.ref('Admin');
-    
-    // Query the database to find a matching employee by ID
-    adminRef.orderByChild('employee_id').equalTo(employeeId).once('value')
-      .then((snapshot) => {
-        if (snapshot.exists()) {
-          let isAuthenticated = false;
-          let adminData = null;
+    try {
+      // Reference to the admin collection in Firebase
+      const adminRef = database.ref('Admin');
+      
+      // Query the database to find a matching employee by ID
+      const snapshot = await adminRef.orderByChild('employee_id').equalTo(employeeId).once('value');
+      
+      if (snapshot.exists()) {
+        let isAuthenticated = false;
+        let adminData = null;
+        
+        // Check if name also matches
+        snapshot.forEach((childSnapshot) => {
+          const data = childSnapshot.val();
+          if (data.name === adminName) {
+            isAuthenticated = true;
+            adminData = {
+              id: childSnapshot.key,
+              name: data.name,
+              department: data.department,
+              employee_id: data.employee_id,
+              role: data.role
+            };
+          }
+        });
+        
+        if (isAuthenticated && adminData) {
+          console.log('Authentication successful:', adminData);
           
-          // Check if name also matches
-          snapshot.forEach((childSnapshot) => {
-            const data = childSnapshot.val();
-            if (data.name === adminName) {
-              isAuthenticated = true;
-              adminData = {
-                id: childSnapshot.key,
-                name: data.name,
-                department: data.department,
-                employee_id: data.employee_id,
-                role: data.role
-              };
-            }
-          });
+          // Store session data
+          const sessionStored = await storeAdminSession(adminData);
           
-          if (isAuthenticated && adminData) {
-            console.log('Authentication successful:', adminData);
+          if (sessionStored) {
+            console.log('Navigating to AdminDashboard with stored session');
             
             // Navigate to AdminDashboard with credentials
-            navigation.navigate('AdminDashboard', {
-              adminId: adminData.id,
-              adminName: adminData.name,
-              adminDepartment: adminData.department,
-              adminEmployeeId: adminData.employee_id,
-              adminRole: adminData.role
+            navigation.reset({
+              index: 0,
+              routes: [{
+                name: 'AdminDashboard',
+                params: {
+                  adminId: adminData.id,
+                  adminName: adminData.name,
+                  adminDepartment: adminData.department,
+                  adminEmployeeId: adminData.employee_id,
+                  adminRole: adminData.role,
+                  // Add flag to indicate fresh login
+                  fromLogin: true
+                }
+              }]
             });
           } else {
-            Alert.alert('Authentication Failed', 'Invalid name or employee ID');
+            Alert.alert('Error', 'Failed to create session. Please try again.');
           }
         } else {
-          Alert.alert('Authentication Failed', 'Employee ID not found');
+          Alert.alert('Authentication Failed', 'Invalid name or employee ID');
         }
-        setLoading(false);
-      })
-      .catch((error) => {
-        console.error('Login error:', error);
-        Alert.alert('Error', 'Failed to authenticate. Please try again.');
-        setLoading(false);
-      });
+      } else {
+        Alert.alert('Authentication Failed', 'Employee ID not found');
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      Alert.alert('Error', 'Failed to authenticate. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Login button animation pulse effect

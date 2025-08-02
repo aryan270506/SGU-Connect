@@ -14,6 +14,7 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { getDatabase, ref, onValue, off } from 'firebase/database';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 
 const TeacherProfileScreen = () => {
@@ -32,8 +33,104 @@ const TeacherProfileScreen = () => {
   useEffect(() => {
     if (employeeId) {
       fetchTeacherData();
+    } else {
+      // Try to get teacher data from AsyncStorage if not in params
+      loadTeacherFromStorage();
     }
   }, [employeeId]);
+
+  const loadTeacherFromStorage = async () => {
+    try {
+      const storedUserData = await AsyncStorage.getItem('userData');
+      if (storedUserData) {
+        const parsedData = JSON.parse(storedUserData);
+        if (parsedData.employeeId) {
+          fetchTeacherDataById(parsedData.employeeId);
+        } else {
+          setLoading(false);
+          Alert.alert('Error', 'No teacher data found');
+        }
+      } else {
+        setLoading(false);
+        Alert.alert('Error', 'No session data found');
+      }
+    } catch (error) {
+      console.error('Error loading teacher from storage:', error);
+      setLoading(false);
+    }
+  };
+
+
+    const checkSessionExpiry = async () => {
+    try {
+      const expiry = await AsyncStorage.getItem('sessionExpiry');
+      if (!expiry) return false;
+      return new Date() < new Date(expiry);
+    } catch (error) {
+      console.error('Error checking session expiry:', error);
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    const verifySession = async () => {
+      const isValid = await checkSessionExpiry();
+      if (!isValid) {
+        Alert.alert('Session Expired', 'Your session has expired. Please login again.');
+        await clearSession();
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'TeacherLogin' }]
+        });
+        return;
+      }
+
+      if (employeeId) {
+        fetchTeacherData();
+      } else {
+        // Try to get teacher data from AsyncStorage if not in params
+        loadTeacherFromStorage();
+      }
+    };
+
+    verifySession();
+  }, [employeeId]);
+
+
+  const fetchTeacherDataById = (id) => {
+    const database = getDatabase();
+    const teachersRef = ref(database, 'Faculty');
+    
+    const unsubscribe = onValue(teachersRef, (snapshot) => {
+      const facultyData = snapshot.val();
+      let foundTeacher = null;
+
+      // Find the teacher with matching employee_id
+      for (const key in facultyData) {
+        if (facultyData[key].employee_id === id) {
+          foundTeacher = {
+            id: key,
+            ...facultyData[key]
+          };
+          break;
+        }
+      }
+
+      if (foundTeacher) {
+        setTeacherData(foundTeacher);
+        startAnimations();
+      } else {
+        Alert.alert('Error', 'Teacher data not found');
+      }
+      setLoading(false);
+    }, (error) => {
+      console.error('Error fetching teacher data:', error);
+      Alert.alert('Error', 'Failed to load teacher data');
+      setLoading(false);
+    });
+
+    return () => off(teachersRef, 'value', unsubscribe);
+  };
 
   const fetchTeacherData = () => {
     const database = getDatabase();
@@ -86,6 +183,26 @@ const TeacherProfileScreen = () => {
     ]).start();
   };
 
+  const clearSession = async () => {
+    try {
+      console.log('Clearing teacher session...');
+      
+      // Clear AsyncStorage
+      await AsyncStorage.multiRemove(['userData', 'userRole']);
+      
+      // Clear global session if available
+      if (global.clearAppSession) {
+        await global.clearAppSession();
+      }
+      
+      console.log('Teacher session cleared successfully');
+      return true;
+    } catch (error) {
+      console.error('Error clearing session:', error);
+      return false;
+    }
+  };
+
   const handleLogout = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert(
@@ -95,11 +212,18 @@ const TeacherProfileScreen = () => {
         { text: 'Cancel', style: 'cancel' },
         { 
           text: 'Logout', 
-          onPress: () => {
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'TeacherLogin' }]
-            });
+          onPress: async () => {
+            const sessionCleared = await clearSession();
+            
+            if (sessionCleared) {
+              // Reset navigation stack and go to teacher login
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'TeacherLogin' }]
+              });
+            } else {
+              Alert.alert('Error', 'Failed to logout completely. Please try again.');
+            }
           }
         }
       ]
@@ -179,9 +303,7 @@ const TeacherProfileScreen = () => {
         >
           {/* Profile Header with Back Button */}
           <View style={styles.header}>
-           
             <Text style={styles.headerTitle}>Teacher Profile</Text>
-            
           </View>
 
           {/* Profile Avatar Section */}
@@ -193,7 +315,7 @@ const TeacherProfileScreen = () => {
             </View>
             <Text style={styles.name}>{teacherData.name || 'N/A'}</Text>
             <Text style={styles.position}>
-              {teacherData.role || 'Teacher'} Id : {teacherData.employee_id}
+              {teacherData.role || 'Teacher'} ID: {teacherData.employee_id}
             </Text>
           </View>
 
@@ -216,11 +338,8 @@ const TeacherProfileScreen = () => {
               items={[
                 { label: 'Subjects', value: formatSubjects(teacherData.subjects) },
                 { label: 'Divisions', value: formatDivisions(teacherData.divisions) },
-                
               ]} 
             />
-
-           
           </View>
 
           {/* Logout Button */}

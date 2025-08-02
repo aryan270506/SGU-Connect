@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { getDatabase, ref, onValue } from 'firebase/database';
+import DataPreloaderTeacher from './DataPreloaderTeacher';
 
 const AssignmentYearDivisionSelector = () => {
   const [selectedYear, setSelectedYear] = useState(null);
@@ -19,6 +20,7 @@ const AssignmentYearDivisionSelector = () => {
   const [availableDivisions, setAvailableDivisions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [teacherData, setTeacherData] = useState(null);
+  const [usingCachedData, setUsingCachedData] = useState(false);
 
   const route = useRoute();
   const navigation = useNavigation();
@@ -33,12 +35,84 @@ const AssignmentYearDivisionSelector = () => {
   } = route.params || {};
 
   useEffect(() => {
-    if (employeeId) {
-      fetchTeacherData();
-    }
-  }, [employeeId]);
+    initializeData();
+  }, []);
 
-  const fetchTeacherData = async () => {
+  const initializeData = async () => {
+    try {
+      // First, try to load cached data from preloader
+      const cachedTeacherData = await DataPreloaderTeacher.getCachedData('teacherData');
+      const cachedMetadata = await DataPreloaderTeacher.getCachedData('teacherMetadata');
+      
+      if (cachedTeacherData && cachedMetadata && await DataPreloaderTeacher.isDataFresh()) {
+        console.log('Using cached teacher data for assignment selector');
+        setUsingCachedData(true);
+        
+        // Use cached data to populate the selector
+        setupTeacherDataFromCache(cachedTeacherData, cachedMetadata);
+        setLoading(false);
+      } else {
+        console.log('Cached data not available or stale, fetching from Firebase');
+        setUsingCachedData(false);
+        
+        // Fallback to Firebase if cached data is not available or stale
+        if (employeeId) {
+          await fetchTeacherDataFromFirebase();
+        } else {
+          Alert.alert('Error', 'No teacher information available');
+          setLoading(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error initializing data:', error);
+      // Fallback to Firebase on error
+      if (employeeId) {
+        await fetchTeacherDataFromFirebase();
+      } else {
+        Alert.alert('Error', 'Failed to load teacher data');
+        setLoading(false);
+      }
+    }
+  };
+
+  const setupTeacherDataFromCache = (cachedTeacherData, cachedMetadata) => {
+    try {
+      setTeacherData(cachedTeacherData);
+      
+      // Use metadata for years and divisions if available
+      const yearsData = cachedMetadata.years || cachedTeacherData.years || {};
+      const divisionsData = cachedMetadata.divisions || {};
+      
+      // Process years data
+      const yearsArray = Object.entries(yearsData).map(([key, value]) => ({
+        id: key,
+        label: `${value} Year`,
+        value: value
+      }));
+      setAvailableYears(yearsArray);
+
+      // Process divisions data - only use actual assigned divisions
+      if (Object.keys(divisionsData).length > 0) {
+        const divisionsArray = Object.entries(divisionsData).map(([key, value]) => ({
+          id: key,
+          label: `Division ${value}`,
+          value: value
+        }));
+        setAvailableDivisions(divisionsArray);
+      } else {
+        // No divisions assigned to this teacher
+        setAvailableDivisions([]);
+      }
+      
+      console.log(`Loaded from cache: ${yearsArray.length} years, ${Object.keys(divisionsData).length} divisions`);
+    } catch (error) {
+      console.error('Error setting up cached data:', error);
+      // Fallback to Firebase on error
+      fetchTeacherDataFromFirebase();
+    }
+  };
+
+  const fetchTeacherDataFromFirebase = async () => {
     try {
       const database = getDatabase();
       const teachersRef = ref(database, 'Faculty');
@@ -67,21 +141,29 @@ const AssignmentYearDivisionSelector = () => {
           }));
           setAvailableYears(yearsArray);
 
-          // Process divisions data
+          // Process divisions data - only use actual assigned divisions
           const divisionsData = foundTeacher.divisions || {};
-          const divisionsArray = Object.entries(divisionsData).map(([key, value]) => ({
-            id: key,
-            label: `Division ${value}`,
-            value: value
-          }));
-          setAvailableDivisions(divisionsArray);
+          if (Object.keys(divisionsData).length > 0) {
+            const divisionsArray = Object.entries(divisionsData).map(([key, value]) => ({
+              id: key,
+              label: `Division ${value}`,
+              value: value
+            }));
+            setAvailableDivisions(divisionsArray);
+          } else {
+            // No divisions assigned to this teacher
+            console.log('No divisions assigned to this teacher in Firebase');
+            setAvailableDivisions([]);
+          }
+          
+          console.log(`Loaded from Firebase: ${yearsArray.length} years, ${Object.keys(divisionsData).length} divisions`);
         } else {
           Alert.alert('Error', 'Teacher data not found');
         }
         setLoading(false);
       }, { onlyOnce: true });
     } catch (error) {
-      console.error('Error fetching teacher data:', error);
+      console.error('Error fetching teacher data from Firebase:', error);
       Alert.alert('Error', 'Failed to load teacher data');
       setLoading(false);
     }
@@ -103,11 +185,64 @@ const AssignmentYearDivisionSelector = () => {
         selectedDivision,
         teacherId,
         employeeId,
-        teacherName
+        teacherName,
+        usingCachedData
       });
     } else {
       Alert.alert('Incomplete Selection', 'Please select both year and division');
     }
+  };
+
+  const handleRefreshData = async () => {
+    if (!teacherData) return;
+    
+    setLoading(true);
+    try {
+      console.log('Refreshing teacher data...');
+      
+      // Force refresh the preloaded data
+      await DataPreloaderTeacher.refreshData(teacherData);
+      
+      // Reload data from cache
+      await initializeData();
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      Alert.alert('Error', 'Failed to refresh data');
+      setLoading(false);
+    }
+  };
+
+  const handleContactAdmin = () => {
+    Alert.alert(
+      'Contact Administrator',
+      'Please contact your system administrator to assign divisions to your account.',
+      [
+        { text: 'OK', style: 'default' }
+      ]
+    );
+  };
+
+  const renderDataSourceIndicator = () => {
+    if (loading) return null;
+    
+    return (
+      <View style={styles.dataSourceContainer}>
+        <View style={styles.dataSourceInfo}>
+          <Text style={styles.dataSourceText}>
+            {usingCachedData ? '📱 Using cached data' : '🌐 Live data from server'}
+          </Text>
+        </View>
+        {usingCachedData && (
+          <TouchableOpacity 
+            style={styles.refreshButton}
+            onPress={handleRefreshData}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.refreshButtonText}>Refresh</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
   };
 
   const renderYearOptions = () => {
@@ -115,6 +250,9 @@ const AssignmentYearDivisionSelector = () => {
       return (
         <View style={styles.noDataContainer}>
           <Text style={styles.noDataText}>No years assigned to this teacher</Text>
+          <TouchableOpacity style={styles.contactAdminButton} onPress={handleContactAdmin}>
+            <Text style={styles.contactAdminText}>Contact Admin</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -150,6 +288,12 @@ const AssignmentYearDivisionSelector = () => {
       return (
         <View style={styles.noDataContainer}>
           <Text style={styles.noDataText}>No divisions assigned to this teacher</Text>
+          <Text style={styles.noDataSubText}>
+            Please contact your administrator to assign divisions to your account.
+          </Text>
+          <TouchableOpacity style={styles.contactAdminButton} onPress={handleContactAdmin}>
+            <Text style={styles.contactAdminText}>Contact Admin</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -186,11 +330,18 @@ const AssignmentYearDivisionSelector = () => {
         <StatusBar barStyle="light-content" backgroundColor="#667eea" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#667eea" />
-          <Text style={styles.loadingText}>Loading teacher data...</Text>
+          <Text style={styles.loadingText}>
+            {usingCachedData ? 'Loading cached data...' : 'Fetching teacher data...'}
+          </Text>
+          <Text style={styles.loadingSubText}>
+            Checking assigned years and divisions...
+          </Text>
         </View>
       </SafeAreaView>
     );
   }
+
+  const canProceed = selectedYear && selectedDivision && availableDivisions.length > 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -202,6 +353,9 @@ const AssignmentYearDivisionSelector = () => {
           <Text style={styles.teacherName}>Welcome, {teacherName}</Text>
         )}
       </View>
+
+      {/* Data Source Indicator */}
+      {renderDataSourceIndicator()}
 
       <View style={styles.content}>
         {/* Year Selection */}
@@ -232,17 +386,25 @@ const AssignmentYearDivisionSelector = () => {
         <TouchableOpacity
           style={[
             styles.submitButton,
-            (!selectedYear || !selectedDivision) && styles.disabledButton,
+            !canProceed && styles.disabledButton,
           ]}
           onPress={handleSubmit}
-          disabled={!selectedYear || !selectedDivision}
+          disabled={!canProceed}
           activeOpacity={0.8}
         >
-          <Text style={styles.submitButtonText}>Continue</Text>
+          <Text style={styles.submitButtonText}>
+            {availableDivisions.length === 0 ? 'No Divisions Assigned' : 'Continue'}
+          </Text>
         </TouchableOpacity>
 
-        {/* Teacher Info */}
-        
+        {availableDivisions.length === 0 && (
+          <View style={styles.helpContainer}>
+            <Text style={styles.helpText}>
+              🔍 Can't find your divisions? This teacher account doesn't have any divisions assigned. 
+              Please contact your administrator to set up your teaching assignments.
+            </Text>
+          </View>
+        )}
       </View>
     </SafeAreaView>
   );
@@ -257,11 +419,20 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
   loadingText: {
     marginTop: 10,
     fontSize: 16,
     color: '#666',
+    textAlign: 'center',
+  },
+  loadingSubText: {
+    marginTop: 5,
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
   header: {
     backgroundColor: '#667eea',
@@ -290,6 +461,35 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 5,
     opacity: 0.9,
+  },
+  dataSourceContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: '#e8f4fd',
+    borderBottomWidth: 1,
+    borderBottomColor: '#d1ecf1',
+  },
+  dataSourceInfo: {
+    flex: 1,
+  },
+  dataSourceText: {
+    fontSize: 14,
+    color: '#0c5460',
+    fontWeight: '500',
+  },
+  refreshButton: {
+    backgroundColor: '#667eea',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+  },
+  refreshButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   content: {
     flex: 1,
@@ -376,15 +576,35 @@ const styles = StyleSheet.create({
   noDataContainer: {
     alignItems: 'center',
     padding: 20,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#fff3cd',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e9ecef',
+    borderColor: '#ffeaa7',
   },
   noDataText: {
     fontSize: 16,
-    color: '#6c757d',
+    color: '#856404',
     textAlign: 'center',
+    fontWeight: '600',
+  },
+  noDataSubText: {
+    fontSize: 14,
+    color: '#856404',
+    textAlign: 'center',
+    marginTop: 5,
+    lineHeight: 20,
+  },
+  contactAdminButton: {
+    backgroundColor: '#f39c12',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 10,
+  },
+  contactAdminText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   selectionDisplay: {
     backgroundColor: '#f8f9fa',
@@ -428,23 +648,18 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
-  teacherInfo: {
+  helpContainer: {
     backgroundColor: '#e3f2fd',
     padding: 15,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#bbdefb',
   },
-  teacherInfoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1976d2',
-    marginBottom: 8,
-  },
-  teacherInfoText: {
+  helpText: {
     fontSize: 14,
     color: '#1565c0',
-    marginBottom: 4,
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });
 

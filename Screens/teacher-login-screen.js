@@ -17,6 +17,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { getAuth } from 'firebase/auth';
 import { getDatabase, ref, onValue } from 'firebase/database';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
@@ -26,7 +27,7 @@ const TeacherLoginScreen = () => {
   const [teacherName, setTeacherName] = useState('');
   const [employeeId, setEmployeeId] = useState('');
   const [loading, setLoading] = useState(false);
-
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
 
   // Animation values
   const fadeAnim = useState(new Animated.Value(0))[0];
@@ -39,6 +40,76 @@ const TeacherLoginScreen = () => {
   const buttonAnim = useState(new Animated.Value(0))[0];
 
   useEffect(() => {
+    // Check for existing session when component mounts
+    checkExistingSession();
+});
+
+
+
+  // Function to check if user has a valid session
+  const checkExistingSession = async () => {
+    try {
+      console.log('Checking existing session...');
+      
+      const [userData, userRole, sessionExpiry] = await Promise.all([
+        AsyncStorage.getItem('userData'),
+        AsyncStorage.getItem('userRole'),
+        AsyncStorage.getItem('sessionExpiry')
+      ]);
+
+      console.log('Session check results:', {
+        hasUserData: !!userData,
+        userRole: userRole,
+        hasExpiry: !!sessionExpiry
+      });
+
+      // Clean userRole by removing extra quotes if they exist
+      let cleanUserRole = userRole;
+      if (typeof userRole === 'string') {
+        cleanUserRole = userRole.replace(/^["'](.*)["']$/, '$1');
+      }
+
+      // Check if we have valid session data
+      if (userData && cleanUserRole === 'teacher' && sessionExpiry) {
+        const expiryDate = new Date(sessionExpiry);
+        const now = new Date();
+        
+        console.log('Session expiry:', expiryDate);
+        console.log('Current time:', now);
+        console.log('Session valid:', expiryDate > now);
+
+        // If session is still valid, navigate to dashboard
+        if (expiryDate > now) {
+          const parsedUserData = JSON.parse(userData);
+          console.log('Valid session found, navigating to dashboard with data:', parsedUserData);
+          
+          navigation.reset({
+            index: 0,
+            routes: [{
+              name: 'TeacherDashboard',
+              params: parsedUserData
+            }]
+          });
+          return; // Don't start animations or show login form
+        } else {
+          console.log('Session expired, clearing data');
+          // Session expired, clear it
+          await AsyncStorage.multiRemove(['userData', 'userRole', 'sessionExpiry']);
+        }
+      }
+
+      // No valid session found, show login form
+      setIsCheckingSession(false);
+      startAnimations();
+      
+    } catch (error) {
+      console.error('Error checking existing session:', error);
+      setIsCheckingSession(false);
+      startAnimations();
+    }
+  };
+
+  const startAnimations = () => {
     // Start animations when component mounts
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -74,53 +145,112 @@ const TeacherLoginScreen = () => {
         }),
       ])
     ]).start();
-  }, []);
+  };
 
-// In TeacherLoginScreen.js
-const handleLogin = async () => {
-  if (!teacherName || !employeeId) {
-    Alert.alert('Error', 'Please enter your Teacher Name and Password.');
-    return;
-  }
+  // Function to store session data with proper structure
+  const storeSessionData = async (teacherData) => {
+    try {
+      const sessionData = {
+        teacherId: teacherData.employee_id,
+        employeeId: teacherData.employee_id,
+        teacherName: teacherData.name,
+        course: teacherData.subjects?.e || 'N/A',
+        selectedBranches: teacherData.course_codes ? [{ id: teacherData.course_codes.e, name: teacherData.course_codes.e }] : [],
+        // PRESERVE ORIGINAL STRUCTURE:
+        divisions: teacherData.divisions || {},  // Keep as object
+        years: teacherData.years || {},          // Keep as object
+        subjects: teacherData.subjects ? Object.values(teacherData.subjects) : [],
+        role: teacherData.role || 'Teacher',
+        loginTime: new Date().toISOString(),
+        // Add additional fields for better session management
+        originalData: teacherData // Store original data for reference
+      };
 
-  setLoading(true);
-  try {
-    const database = getDatabase();
-    const teachersRef = ref(database, 'Faculty');
-    onValue(teachersRef, (snapshot) => {
-      const teachersData = snapshot.val();
-      let teacherFound = null;
+      // Calculate session expiry (24 hours from now)
+      const expiryTime = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-      for (const key in teachersData) {
-        if (teachersData[key].name.toLowerCase() === teacherName.toLowerCase() && 
-            teachersData[key].employee_id === employeeId) {
-          teacherFound = teachersData[key];
-          break;
+      // FIX: Store userRole as plain string without quotes
+      await Promise.all([
+        AsyncStorage.setItem('userData', JSON.stringify(sessionData)),
+        AsyncStorage.setItem('userRole', 'teacher'), // Store as plain string, not JSON
+        AsyncStorage.setItem('sessionExpiry', expiryTime),
+        AsyncStorage.setItem('lastLoginTime', new Date().toISOString())
+      ]);
+      
+      console.log('Session data stored successfully:', {
+        sessionData: sessionData,
+        userRole: 'teacher', // Log the clean role
+        expiryTime: expiryTime
+      });
+      
+      return sessionData;
+    } catch (error) {
+      console.error('Error storing session data:', error);
+      throw error;
+    }
+  };
+
+  const handleLogin = async () => {
+    if (!teacherName || !employeeId) {
+      Alert.alert('Error', 'Please enter your Teacher Name and Password.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const database = getDatabase();
+      const teachersRef = ref(database, 'Faculty');
+      
+      onValue(teachersRef, async (snapshot) => {
+        const teachersData = snapshot.val();
+        let teacherFound = null;
+
+        // Search for teacher
+        for (const key in teachersData) {
+          if (teachersData[key].name.toLowerCase() === teacherName.toLowerCase() && 
+              teachersData[key].employee_id === employeeId) {
+            teacherFound = teachersData[key];
+            break;
+          }
         }
-      }
 
-      if (teacherFound) {
-        navigation.navigate('TeacherDashboard', {
-          teacherId: teacherFound.employee_id, // Make sure this matches students_doubts.teacherId
-          employeeId: teacherFound.employee_id,
-          teacherName: teacherFound.name,
-          course: teacherFound.subjects?.e || 'N/A',
-          selectedBranches: teacherFound.course_codes ? [{ id: teacherFound.course_codes.e, name: teacherFound.course_codes.e }] : [],
-          selectedDivisions: teacherFound.divisions ? Object.values(teacherFound.divisions).map(div => ({ id: div, name: div })) : [],
-          subjects: teacherFound.subjects ? Object.values(teacherFound.subjects) : [],
-          years: teacherFound.years ? Object.values(teacherFound.years) : []
-        });
-      } else {
-        Alert.alert('Error', 'Invalid teacher name or password');
-      }
-    }, { onlyOnce: true });
-  } catch (error) {
-    console.error('Login error:', error);
-    Alert.alert('Error', 'Failed to login. Please try again.');
-  } finally {
-    setLoading(false);
-  }
-};
+        if (teacherFound) {
+          try {
+            console.log('Teacher found:', teacherFound);
+            
+            // Clear any existing session data first
+            await AsyncStorage.multiRemove(['userData', 'userRole', 'sessionExpiry']);
+            
+            // Store new session data
+            const sessionData = await storeSessionData(teacherFound);
+            
+            console.log('Login successful, navigating to dashboard');
+            
+            // Navigate to teacher dashboard with session data
+            navigation.reset({
+              index: 0,
+              routes: [{
+                name: 'TeacherDashboard',
+                params: sessionData
+              }]
+            });
+            
+          } catch (sessionError) {
+            console.error('Error storing session:', sessionError);
+            Alert.alert('Error', 'Failed to save session. Please try again.');
+          }
+        } else {
+          Alert.alert('Error', 'Invalid teacher name or password');
+        }
+        setLoading(false);
+      }, { onlyOnce: true });
+    } catch (error) {
+      console.error('Login error:', error);
+      Alert.alert('Error', 'Failed to login. Please try again.');
+      setLoading(false);
+    }
+  };
+
   // Login button animation pulse effect
   const pulseAnim = useState(new Animated.Value(1))[0];
   
@@ -144,6 +274,23 @@ const handleLogin = async () => {
       pulseAnim.setValue(1);
     }
   }, [loading]);
+
+  // Show loading screen while checking session
+  if (isCheckingSession) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <LinearGradient
+          colors={['#0F2027', '#203A43', '#2C5364']}
+          style={styles.background}
+        >
+          <View style={styles.loadingContainer}>
+            <Icon name="loading" size={50} color="#64FFDA" style={styles.spinIcon} />
+            <Text style={styles.loadingText}>Checking session...</Text>
+          </View>
+        </LinearGradient>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -326,6 +473,20 @@ const styles = StyleSheet.create({
   background: {
     flex: 1,
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#64FFDA',
+    fontSize: 16,
+    marginTop: 10,
+    fontFamily: 'monospace',
+  },
+  spinIcon: {
+    // Add rotation animation in component if needed
+  },
   imageContainer: {
     height: '35%',
     alignItems: 'center',
@@ -444,14 +605,6 @@ const styles = StyleSheet.create({
   loginButtonContent: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  spinIcon: {
-    marginRight: 10,
-    transform: [{ rotate: '0deg' }],  // Will be animated in the component
   },
   loginButtonText: {
     color: '#FFFFFF',

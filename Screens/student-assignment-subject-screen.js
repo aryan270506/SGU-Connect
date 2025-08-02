@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, SafeAreaView, FlatList, TouchableOpacity, Activ
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { database } from './firebase';
+import DataPreloader from './datapreloderstudent';
 
 const SubjectsScreen = ({ studentData: propStudentData }) => {
   const navigation = useNavigation();
@@ -10,6 +11,8 @@ const SubjectsScreen = ({ studentData: propStudentData }) => {
   const [teachers, setTeachers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [studentData, setStudentData] = useState(null);
+  const [dataSource, setDataSource] = useState('cache'); // 'cache' or 'live'
+  const [loadingMessage, setLoadingMessage] = useState('Loading your Subjects...');
 
   // Get student data from props or navigation params
   useEffect(() => {
@@ -23,20 +26,38 @@ const SubjectsScreen = ({ studentData: propStudentData }) => {
     }
   }, [route.params, propStudentData]);
 
-  // Fetch ONLY teachers who teach the student's year and division
+  // Fast load teachers data using DataPreloader
   useEffect(() => {
-    const fetchTeachers = async () => {
+    const loadTeachersData = async () => {
       try {
         setLoading(true);
-        console.log('Starting to fetch teachers for student:', studentData);
+        console.log('Starting to load teachers for student:', studentData);
         
-        // Don't fetch if we don't have student data
+        // Don't load if we don't have student data
         if (!studentData || !studentData.Year || !studentData.Division) {
           console.log('Missing student data, cannot filter teachers');
           setTeachers([]);
           setLoading(false);
           return;
         }
+
+        // Step 1: Try to load from cache first (super fast)
+        setLoadingMessage('Loading from cache...');
+        const cachedTeachers = await DataPreloader.getCachedData('teachersData');
+        const isDataFresh = await DataPreloader.isDataFresh();
+        
+        if (cachedTeachers && cachedTeachers.length > 0 && isDataFresh) {
+          console.log('Using cached teachers data:', cachedTeachers.length, 'teachers');
+          setTeachers(cachedTeachers);
+          setDataSource('cache');
+          setLoading(false);
+          return;
+        }
+
+        // Step 2: If no cache or data is stale, load from Firebase
+        console.log('Cache miss or stale data, loading from Firebase...');
+        setLoadingMessage('Fetching latest data...');
+        setDataSource('live');
         
         // Test database connection
         const testRef = database.ref();
@@ -79,40 +100,39 @@ const SubjectsScreen = ({ studentData: propStudentData }) => {
             }
             
             // Get years they teach
-           // Replace the years and divisions processing with this:
-let years = [];
-if (faculty.years) {
-  if (typeof faculty.years === 'object') {
-    // Handle Firebase object structure
-    years = Object.values(faculty.years).map(year => year.toString().trim());
-  } else if (Array.isArray(faculty.years)) {
-    years = faculty.years.map(year => year.toString().trim());
-  }
-}
+            let years = [];
+            if (faculty.years) {
+              if (typeof faculty.years === 'object') {
+                // Handle Firebase object structure
+                years = Object.values(faculty.years).map(year => year.toString().trim());
+              } else if (Array.isArray(faculty.years)) {
+                years = faculty.years.map(year => year.toString().trim());
+              }
+            }
 
-let divisions = [];
-if (faculty.divisions) {
-  if (typeof faculty.divisions === 'object') {
-    // Handle Firebase object structure
-    divisions = Object.values(faculty.divisions).map(div => div.toString().trim());
-  } else if (Array.isArray(faculty.divisions)) {
-    divisions = faculty.divisions.map(div => div.toString().trim());
-  }
-}
+            let divisions = [];
+            if (faculty.divisions) {
+              if (typeof faculty.divisions === 'object') {
+                // Handle Firebase object structure
+                divisions = Object.values(faculty.divisions).map(div => div.toString().trim());
+              } else if (Array.isArray(faculty.divisions)) {
+                divisions = faculty.divisions.map(div => div.toString().trim());
+              }
+            }
 
-// Normalize student year (remove "Year" from "1st Year")
-const studentYear = studentData.Year.toString().replace(' Year', '').trim().toLowerCase();
-const studentDivision = studentData.Division.toString().trim().toLowerCase();
+            // Normalize student year (remove "Year" from "1st Year")
+            const studentYear = studentData.Year.toString().replace(' Year', '').trim().toLowerCase();
+            const studentDivision = studentData.Division.toString().trim().toLowerCase();
 
-// Check if teacher teaches the student's year
-const teachesStudentYear = years.some(year => 
-  year.toLowerCase().includes(studentYear)
-);
+            // Check if teacher teaches the student's year
+            const teachesStudentYear = years.some(year => 
+              year.toLowerCase().includes(studentYear)
+            );
 
-// Check if teacher teaches the student's division
-const teachesStudentDivision = divisions.some(division => 
-  division.toLowerCase() === studentDivision
-);
+            // Check if teacher teaches the student's division
+            const teachesStudentDivision = divisions.some(division => 
+              division.toLowerCase() === studentDivision
+            );
             
             console.log(`Teacher ${faculty.name}:`, {
               teachesStudentYear,
@@ -146,25 +166,79 @@ const teachesStudentDivision = divisions.some(division =>
           
           console.log('Final filtered teachers list:', teachersList);
           setTeachers(teachersList);
+          
+          // Update cache with fresh data
+          setLoadingMessage('Updating cache...');
+          await DataPreloader.storeTeachersData(teachersList);
+          
         } else {
           console.log('No faculty data found');
-          Alert.alert('Info', 'No faculty data found in database');
-          setTeachers([]);
+          
+          // Try to use cached data even if stale as fallback
+          if (cachedTeachers && cachedTeachers.length > 0) {
+            console.log('Using stale cached data as fallback');
+            setTeachers(cachedTeachers);
+            setDataSource('cache (stale)');
+          } else {
+            Alert.alert('Info', 'No faculty data found in database');
+            setTeachers([]);
+          }
         }
       } catch (error) {
-        console.error('Error fetching teachers:', error);
-        Alert.alert('Error', 'Failed to fetch teachers data: ' + error.message);
-        setTeachers([]);
+        console.error('Error loading teachers:', error);
+        
+        // Try to use cached data as fallback on error
+        try {
+          const cachedTeachers = await DataPreloader.getCachedData('teachersData');
+          if (cachedTeachers && cachedTeachers.length > 0) {
+            console.log('Using cached data as fallback after error');
+            setTeachers(cachedTeachers);
+            setDataSource('cache (fallback)');
+            Alert.alert('Notice', 'Using cached data due to connection issue');
+          } else {
+            Alert.alert('Error', 'Failed to load teachers data: ' + error.message);
+            setTeachers([]);
+          }
+        } catch (cacheError) {
+          console.error('Cache fallback also failed:', cacheError);
+          Alert.alert('Error', 'Failed to load teachers data: ' + error.message);
+          setTeachers([]);
+        }
       } finally {
         setLoading(false);
       }
     };
 
-    // Only fetch when we have student data
+    // Only load when we have student data
     if (studentData) {
-      fetchTeachers();
+      loadTeachersData();
     }
   }, [studentData]); // Dependency on studentData so it refetches when student data changes
+
+  // Handle refresh - force reload from Firebase
+  const handleRefresh = async () => {
+    if (!studentData) return;
+    
+    setLoading(true);
+    setLoadingMessage('Refreshing data...');
+    
+    try {
+      // Clear cache and reload
+      await DataPreloader.refreshData(studentData);
+      
+      // Reload teachers
+      const cachedTeachers = await DataPreloader.getCachedData('teachersData');
+      if (cachedTeachers) {
+        setTeachers(cachedTeachers);
+        setDataSource('refreshed');
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      Alert.alert('Error', 'Failed to refresh data');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleTeacherPress = (teacher) => {
     navigation.navigate('StudentAssignments', { teacher, studentData });
@@ -185,7 +259,7 @@ const teachesStudentDivision = divisions.some(division =>
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#6f42c1" />
-          <Text style={styles.loadingText}>Loading your Subjects...</Text>
+          <Text style={styles.loadingText}>{loadingMessage}</Text>
         </View>
       </SafeAreaView>
     );
@@ -202,6 +276,9 @@ const teachesStudentDivision = divisions.some(division =>
             <Text style={styles.studentDiv}>Division {studentData?.Division || "N/A"}</Text>
           </View>
         </View>
+        <TouchableOpacity style={styles.refreshButton} onPress={handleRefresh}>
+          <Ionicons name="refresh" size={20} color="#ffffff" />
+        </TouchableOpacity>
       </View>
 
       <View style={styles.debugContainer}>
@@ -209,6 +286,7 @@ const teachesStudentDivision = divisions.some(division =>
         <Text style={styles.debugText}>
           Filtered for Year: {studentData?.Year || 'N/A'}, Division: {studentData?.Division || 'N/A'}
         </Text>
+        <Text style={styles.debugText}>Data Source: {dataSource}</Text>
       </View>
 
       <FlatList
@@ -228,6 +306,9 @@ const teachesStudentDivision = divisions.some(division =>
                 'Student data not available'
               }
             </Text>
+            <TouchableOpacity style={styles.retryButton} onPress={handleRefresh}>
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
           </View>
         }
       />
@@ -242,19 +323,12 @@ const TeacherListItem = ({ teacher, onPress }) => (
       <Ionicons name="person" size={32} color="#555" />
     </View>
     <View style={styles.teacherInfo}>
-
-     <Text style={styles.teacherName}>
-          {teacher.subjects.length > 0 ? teacher.subjects.join(', ') : 'No subjects'}
-        </Text>
-    
+      <Text style={styles.teacherName}>
+        {teacher.subjects.length > 0 ? teacher.subjects.join(', ') : 'No subjects'}
+      </Text>
       <Text style={styles.teacherSubject}>{teacher.name}</Text>
       <View style={styles.subjectContainer}>
-        
-       
       </View>
-     
-      
-     
       <Text style={styles.teacherDivisions}>
         Divisions: {teacher.divisions.join(', ') || 'None'}
       </Text>
@@ -277,13 +351,21 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  headerContent: { alignItems: 'center' },
+  headerContent: { alignItems: 'center', flex: 1 },
   headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#ffffff', marginBottom: 5 },
   studentInfo: { flexDirection: 'row', alignItems: 'center' },
   studentYear: { fontSize: 16, color: '#ffffff', fontWeight: '600' },
   divider: { fontSize: 16, color: '#ffffff', marginHorizontal: 8, opacity: 0.8 },
   studentDiv: { fontSize: 16, color: '#ffffff', fontWeight: '600' },
+  refreshButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
   debugContainer: {
     backgroundColor: '#d1ecf1',
     padding: 10,
@@ -346,7 +428,17 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 12, fontWeight: '500' },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   emptyTitle: { fontSize: 18, fontWeight: '500', color: '#333', marginTop: 16, marginBottom: 8 },
-  emptySubtitle: { fontSize: 14, color: '#666', textAlign: 'center', paddingHorizontal: 40 },
+  emptySubtitle: { fontSize: 14, color: '#666', textAlign: 'center', paddingHorizontal: 40, marginBottom: 16 },
+  retryButton: {
+    backgroundColor: '#6f42c1',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  retryButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+  },
 });
 
 export default SubjectsScreen;

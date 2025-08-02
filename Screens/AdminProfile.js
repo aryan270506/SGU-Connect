@@ -14,10 +14,11 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { database } from './firebase';
 import * as Haptics from 'expo-haptics';
 
-const AdminProfile = () => {
+const AdminProfile = ({ adminData: propAdminData }) => {
   const route = useRoute();
   const navigation = useNavigation();
   
@@ -36,49 +37,88 @@ const AdminProfile = () => {
 
   useEffect(() => {
     fetchAdminData();
-  }, [route]);
+  }, [route, propAdminData]);
 
-  const fetchAdminData = () => {
-    // If we have params from navigation, use them
-    if (route.params) {
-      setAdminData({
-        name: route.params.adminName || "",
-        department: route.params.adminDepartment || "",
-        employeeId: route.params.adminEmployeeId || "",
-        role: route.params.adminRole || ""
-      });
-      setLoading(false);
-      startAnimations();
-    } else {
-      // If no params, try to get currently authenticated user from Firebase
-      const currentUser = firebase.auth().currentUser;
-      
-      if (currentUser) {
-        // Get user data from the database
-        database.ref(`Admin/${currentUser.uid}`).once('value')
-          .then((snapshot) => {
-            if (snapshot.exists()) {
-              const data = snapshot.val();
-              setAdminData({
-                name: data.name || "",
-                department: data.department || "",
-                employeeId: data.employee_id || "",
-                role: data.role || ""
-              });
-              startAnimations();
-            } else {
-              Alert.alert('Error', 'Admin data not found');
-            }
-            setLoading(false);
-          })
-          .catch(error => {
-            console.error("Error fetching admin data:", error);
-            Alert.alert('Error', 'Failed to load admin data');
-            setLoading(false);
-          });
-      } else {
+  const fetchAdminData = async () => {
+    try {
+      console.log('Fetching admin data...');
+      console.log('Prop adminData:', propAdminData);
+      console.log('Route params:', route.params);
+
+      // First try to use admin data passed as prop from AdminDashboard
+      if (propAdminData) {
+        console.log('Using prop admin data');
+        setAdminData({
+          name: propAdminData.name || "",
+          department: propAdminData.department || "",
+          employeeId: propAdminData.employee_id || "",
+          role: propAdminData.role || ""
+        });
         setLoading(false);
+        startAnimations();
+        return;
       }
+
+      // Then try to get data from route params (when navigated directly)
+      if (route.params) {
+        console.log('Using route params for admin data');
+        setAdminData({
+          name: route.params.adminName || "",
+          department: route.params.adminDepartment || "",
+          employeeId: route.params.adminEmployeeId || "",
+          role: route.params.adminRole || ""
+        });
+        setLoading(false);
+        startAnimations();
+        return;
+      }
+
+      // If no prop or route params, try to get from AsyncStorage
+      console.log('No prop or route params, checking AsyncStorage...');
+      const [userData, userRole] = await AsyncStorage.multiGet(['userData', 'userRole']);
+      
+      if (userData[1] && userRole[1] === 'admin') {
+        console.log('Found admin session in AsyncStorage');
+        const parsedData = JSON.parse(userData[1]);
+        setAdminData({
+          name: parsedData.name || "",
+          department: parsedData.department || "",
+          employeeId: parsedData.employee_id || "",
+          role: parsedData.role || ""
+        });
+        startAnimations();
+      } else {
+        // Try to get individual admin data from AsyncStorage (fallback)
+        console.log('Trying individual admin data from AsyncStorage...');
+        const adminDataKeys = ['adminName', 'adminDepartment', 'adminEmployeeId', 'adminRole'];
+        const adminValues = await AsyncStorage.multiGet(adminDataKeys);
+        
+        const adminInfo = {};
+        adminValues.forEach(([key, value]) => {
+          const fieldName = key.replace('admin', '').toLowerCase();
+          if (fieldName === 'employeeid') {
+            adminInfo['employeeId'] = value || '';
+          } else {
+            adminInfo[fieldName] = value || '';
+          }
+        });
+
+        if (adminInfo.name) {
+          console.log('Found individual admin data:', adminInfo);
+          setAdminData(adminInfo);
+          startAnimations();
+        } else {
+          console.log('No admin data found anywhere');
+          Alert.alert('Error', 'Admin data not found. Please login again.');
+          handleSessionExpired();
+        }
+      }
+      
+      setLoading(false);
+    } catch (error) {
+      console.error("Error fetching admin data:", error);
+      Alert.alert('Error', 'Failed to load admin data');
+      setLoading(false);
     }
   };
 
@@ -98,6 +138,45 @@ const AdminProfile = () => {
     ]).start();
   };
 
+  const handleSessionExpired = () => {
+    // Clear all session data and go back to login
+    clearAdminSession();
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'Login' }]
+    });
+  };
+
+  const clearAdminSession = async () => {
+    try {
+      console.log('Clearing admin session...');
+      
+      // Clear all session-related data
+      const keysToRemove = [
+        'userData',
+        'userRole',
+        'sessionExpiry',
+        'lastLoginTime',
+        'adminId',
+        'adminName',
+        'adminDepartment', 
+        'adminEmployeeId',
+        'adminRole'
+      ];
+      
+      await AsyncStorage.multiRemove(keysToRemove);
+      
+      // Also clear global session if available
+      if (global.clearAppSession) {
+        await global.clearAppSession();
+      }
+      
+      console.log('Admin session cleared successfully');
+    } catch (error) {
+      console.error('Error clearing admin session:', error);
+    }
+  };
+
   const handleLogout = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert(
@@ -107,13 +186,24 @@ const AdminProfile = () => {
         { text: 'Cancel', style: 'cancel' },
         { 
           text: 'Logout', 
-          onPress: () => {
-            firebase.auth().signOut().then(() => {
+          onPress: async () => {
+            try {
+              console.log('User confirmed logout');
+              
+              // Clear all session data
+              await clearAdminSession();
+              
+              // Navigate back to login screen with reset
               navigation.reset({
                 index: 0,
-                routes: [{ name: 'AdminLogin' }] // Adjust route name as needed
+                routes: [{ name: 'Login' }]
               });
-            });
+              
+              console.log('Logout completed successfully');
+            } catch (error) {
+              console.error('Error during logout:', error);
+              Alert.alert('Error', 'Failed to logout properly. Please try again.');
+            }
           }
         }
       ]
@@ -155,6 +245,12 @@ const AdminProfile = () => {
           <Text style={styles.errorText}>Failed to load admin data</Text>
           <TouchableOpacity style={styles.retryButton} onPress={fetchAdminData}>
             <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.retryButton, { backgroundColor: '#FF4757', marginTop: 10 }]} 
+            onPress={handleSessionExpired}
+          >
+            <Text style={styles.retryButtonText}>Back to Login</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -215,15 +311,28 @@ const AdminProfile = () => {
             />
           </View>
 
-          {/* Logout Button */}
-          <TouchableOpacity 
-            style={styles.logoutButton} 
-            onPress={handleLogout}
-            activeOpacity={0.8}
-          >
-            <MaterialIcons name="logout" size={20} color="#FFF" />
-            <Text style={styles.logoutButtonText}>Sign Out</Text>
-          </TouchableOpacity>
+          {/* Action Buttons */}
+          <View style={styles.actionButtonsContainer}>
+            {/* Edit Profile Button */}
+            <TouchableOpacity 
+              style={styles.editButton} 
+              onPress={handleEdit}
+              activeOpacity={0.8}
+            >
+              <MaterialIcons name="edit" size={20} color="#6C63FF" />
+              <Text style={styles.editButtonText}>Edit Profile</Text>
+            </TouchableOpacity>
+
+            {/* Logout Button */}
+            <TouchableOpacity 
+              style={styles.logoutButton} 
+              onPress={handleLogout}
+              activeOpacity={0.8}
+            >
+              <MaterialIcons name="logout" size={20} color="#FFF" />
+              <Text style={styles.logoutButtonText}>Sign Out</Text>
+            </TouchableOpacity>
+          </View>
         </Animated.View>
       </ScrollView>
     </SafeAreaView>
@@ -362,6 +471,30 @@ const styles = StyleSheet.create({
   },
   infoSection: {
     marginBottom: 30,
+  },
+  actionButtonsContainer: {
+    gap: 15,
+  },
+  editButton: {
+    backgroundColor: '#FFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#6C63FF',
+    shadowColor: '#6C63FF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  editButtonText: {
+    color: '#6C63FF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
   },
   logoutButton: {
     backgroundColor: '#FF4757',

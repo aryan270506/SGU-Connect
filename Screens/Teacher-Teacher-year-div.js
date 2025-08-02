@@ -11,6 +11,8 @@ import {
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { getDatabase, ref, onValue } from 'firebase/database';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import DataPreloaderTeacher from './DataPreloaderTeacher'; // Adjust path as needed
 
 const TeacherTeacherYearDivisionSelector = () => {
   const [selectedYear, setSelectedYear] = useState(null);
@@ -19,6 +21,9 @@ const TeacherTeacherYearDivisionSelector = () => {
   const [availableDivisions, setAvailableDivisions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [teacherData, setTeacherData] = useState(null);
+  const [isPreloading, setIsPreloading] = useState(false);
+  const [preloadProgress, setPreloadProgress] = useState(0);
+  const [preloadMessage, setPreloadMessage] = useState('');
 
   const route = useRoute();
   const navigation = useNavigation();
@@ -33,17 +38,69 @@ const TeacherTeacherYearDivisionSelector = () => {
   } = route.params || {};
 
   useEffect(() => {
-    if (employeeId) {
-      fetchTeacherData();
-    }
-  }, [employeeId]);
+    loadTeacherData();
+    
+    // Set up preloader progress listener
+    const progressListener = (progress) => {
+      setPreloadProgress(progress.progress);
+      setPreloadMessage(progress.message);
+      setIsPreloading(!progress.isComplete);
+    };
+    
+    DataPreloaderTeacher.addProgressListener(progressListener);
+    
+    return () => {
+      DataPreloaderTeacher.removeProgressListener(progressListener);
+    };
+  }, []);
 
-  const fetchTeacherData = async () => {
+  const loadTeacherData = async () => {
+    try {
+      setLoading(true);
+      
+      // First try to load from cached data (AsyncStorage)
+      const cachedTeacherData = await DataPreloaderTeacher.getCachedData('teacherData');
+      const isDataFresh = await DataPreloaderTeacher.isDataFresh();
+      
+      if (cachedTeacherData && isDataFresh) {
+        console.log('Using cached teacher data for teacher-teacher chat');
+        await setupTeacherData(cachedTeacherData);
+        setLoading(false);
+        return;
+      }
+      
+      // If no cached data or data is stale, fetch from Firebase
+      if (employeeId) {
+        await fetchTeacherDataFromFirebase();
+      } else {
+        // Try to get from stored session data
+        const storedUserData = await AsyncStorage.getItem('userData');
+        if (storedUserData) {
+          const parsedData = JSON.parse(storedUserData);
+          if (parsedData.employeeId) {
+            await fetchTeacherDataFromFirebaseById(parsedData.employeeId);
+          } else {
+            Alert.alert('Error', 'No teacher data found in session');
+            setLoading(false);
+          }
+        } else {
+          Alert.alert('Error', 'No session data found');
+          setLoading(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading teacher data:', error);
+      Alert.alert('Error', 'Failed to load teacher data');
+      setLoading(false);
+    }
+  };
+
+  const fetchTeacherDataFromFirebase = async () => {
     try {
       const database = getDatabase();
       const teachersRef = ref(database, 'Faculty');
       
-      onValue(teachersRef, (snapshot) => {
+      onValue(teachersRef, async (snapshot) => {
         const teachersData = snapshot.val();
         let foundTeacher = null;
 
@@ -56,25 +113,16 @@ const TeacherTeacherYearDivisionSelector = () => {
         }
 
         if (foundTeacher) {
-          setTeacherData(foundTeacher);
+          await setupTeacherData(foundTeacher);
           
-          // Process years data
-          const yearsData = foundTeacher.years || {};
-          const yearsArray = Object.entries(yearsData).map(([key, value]) => ({
-            id: key,
-            label: `${value} Year`,
-            value: value
-          }));
-          setAvailableYears(yearsArray);
-
-          // Process divisions data
-          const divisionsData = foundTeacher.divisions || {};
-          const divisionsArray = Object.entries(divisionsData).map(([key, value]) => ({
-            id: key,
-            label: `Division ${value}`,
-            value: value
-          }));
-          setAvailableDivisions(divisionsArray);
+          // Trigger preloading in the background for teacher-teacher chat
+          setIsPreloading(true);
+          try {
+            await DataPreloaderTeacher.preloadAllData(foundTeacher);
+          } catch (preloadError) {
+            console.error('Error during preloading:', preloadError);
+            // Don't show error to user as this is background process
+          }
         } else {
           Alert.alert('Error', 'Teacher data not found');
         }
@@ -87,6 +135,87 @@ const TeacherTeacherYearDivisionSelector = () => {
     }
   };
 
+  const fetchTeacherDataFromFirebaseById = async (id) => {
+    try {
+      const database = getDatabase();
+      const teachersRef = ref(database, 'Faculty');
+      
+      onValue(teachersRef, async (snapshot) => {
+        const teachersData = snapshot.val();
+        let foundTeacher = null;
+
+        // Find the teacher by employee_id
+        for (const key in teachersData) {
+          if (teachersData[key].employee_id === id) {
+            foundTeacher = teachersData[key];
+            break;
+          }
+        }
+
+        if (foundTeacher) {
+          await setupTeacherData(foundTeacher);
+          
+          // Trigger preloading in the background
+          setIsPreloading(true);
+          try {
+            await DataPreloaderTeacher.preloadAllData(foundTeacher);
+          } catch (preloadError) {
+            console.error('Error during preloading:', preloadError);
+          }
+        } else {
+          Alert.alert('Error', 'Teacher data not found');
+        }
+        setLoading(false);
+      }, { onlyOnce: true });
+    } catch (error) {
+      console.error('Error fetching teacher data:', error);
+      Alert.alert('Error', 'Failed to load teacher data');
+      setLoading(false);
+    }
+  };
+
+  const setupTeacherData = async (foundTeacher) => {
+    try {
+      setTeacherData(foundTeacher);
+      
+      // Use DataPreloader methods to get available years and divisions
+      const years = await DataPreloaderTeacher.getAvailableYears();
+      const divisions = await DataPreloaderTeacher.getAvailableDivisions();
+      
+      // If preloader methods return empty, fall back to direct processing
+      if (years.length === 0 && foundTeacher.years) {
+        const yearsData = foundTeacher.years || {};
+        const yearsArray = Object.entries(yearsData).map(([key, value]) => ({
+          id: key,
+          label: `${value} Year`,
+          value: value
+        }));
+        setAvailableYears(yearsArray);
+      } else {
+        setAvailableYears(years);
+      }
+
+      if (divisions.length === 0 && foundTeacher.divisions) {
+        const divisionsData = foundTeacher.divisions || {};
+        const divisionsArray = Object.entries(divisionsData).map(([key, value]) => ({
+          id: key,
+          label: `Division ${value}`,
+          value: value
+        }));
+        setAvailableDivisions(divisionsArray);
+      } else {
+        setAvailableDivisions(divisions);
+      }
+
+      console.log('Teacher data setup complete for teacher-teacher chat:', {
+        years: years.length > 0 ? years : Object.keys(foundTeacher.years || {}),
+        divisions: divisions.length > 0 ? divisions : Object.keys(foundTeacher.divisions || {})
+      });
+    } catch (error) {
+      console.error('Error setting up teacher data:', error);
+    }
+  };
+
   const handleYearSelect = (year) => {
     setSelectedYear(year);
   };
@@ -95,18 +224,43 @@ const TeacherTeacherYearDivisionSelector = () => {
     setSelectedDivision(division);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (selectedYear && selectedDivision) {
-      // Navigate to chat screen with selected data
+      // Get cached faculty data for better performance in teacher-teacher chat
+      const cachedFaculty = await DataPreloaderTeacher.getCachedData('facultyData');
+      const cachedStudents = await DataPreloaderTeacher.getCachedData('assignedStudents');
+      
+      // Navigate to teacher-teacher chat screen with selected data and cached faculty
       navigation.navigate('TeacherTeacherChat', {
         selectedYear,
         selectedDivision,
-        teacherId,
-        employeeId,
-        teacherName
+        teacherId: teacherData?.employee_id || employeeId,
+        employeeId: teacherData?.employee_id || employeeId,
+        teacherName: teacherData?.name || teacherName,
+        cachedFaculty: cachedFaculty || [],
+        cachedStudents: cachedStudents || [],
+        teacherData: teacherData
       });
     } else {
       Alert.alert('Incomplete Selection', 'Please select both year and division');
+    }
+  };
+
+  const handleRefreshData = async () => {
+    if (!teacherData) return;
+    
+    setLoading(true);
+    setIsPreloading(true);
+    
+    try {
+      await DataPreloaderTeacher.refreshData(teacherData);
+      await setupTeacherData(teacherData);
+      Alert.alert('Success', 'Faculty and student data refreshed successfully');
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      Alert.alert('Error', 'Failed to refresh data');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -115,6 +269,13 @@ const TeacherTeacherYearDivisionSelector = () => {
       return (
         <View style={styles.noDataContainer}>
           <Text style={styles.noDataText}>No years assigned to this teacher</Text>
+          <TouchableOpacity 
+            style={styles.refreshButton} 
+            onPress={handleRefreshData}
+            disabled={loading || isPreloading}
+          >
+            <Text style={styles.refreshButtonText}>Refresh Data</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -150,6 +311,13 @@ const TeacherTeacherYearDivisionSelector = () => {
       return (
         <View style={styles.noDataContainer}>
           <Text style={styles.noDataText}>No divisions assigned to this teacher</Text>
+          <TouchableOpacity 
+            style={styles.refreshButton} 
+            onPress={handleRefreshData}
+            disabled={loading || isPreloading}
+          >
+            <Text style={styles.refreshButtonText}>Refresh Data</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -180,6 +348,20 @@ const TeacherTeacherYearDivisionSelector = () => {
     );
   };
 
+  const renderPreloadProgress = () => {
+    if (!isPreloading) return null;
+
+    return (
+      <View style={styles.preloadContainer}>
+        <Text style={styles.preloadTitle}>Loading Faculty Data...</Text>
+        <View style={styles.progressBarContainer}>
+          <View style={[styles.progressBar, { width: `${preloadProgress}%` }]} />
+        </View>
+        <Text style={styles.preloadMessage}>{preloadMessage}</Text>
+      </View>
+    );
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -196,7 +378,15 @@ const TeacherTeacherYearDivisionSelector = () => {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#667eea" />
       
-    
+      <View style={styles.header}>
+        <Text style={styles.title}>Teacher Communication</Text>
+        <Text style={styles.subtitle}>Select Year & Division</Text>
+        {(teacherData?.name || teacherName) && (
+          <Text style={styles.teacherName}>Welcome, {teacherData?.name || teacherName}</Text>
+        )}
+      </View>
+
+      {renderPreloadProgress()}
 
       <View style={styles.content}>
         {/* Year Selection */}
@@ -230,14 +420,16 @@ const TeacherTeacherYearDivisionSelector = () => {
             (!selectedYear || !selectedDivision) && styles.disabledButton,
           ]}
           onPress={handleSubmit}
-          disabled={!selectedYear || !selectedDivision}
+          disabled={!selectedYear || !selectedDivision || loading || isPreloading}
           activeOpacity={0.8}
         >
-          <Text style={styles.submitButtonText}>Continue</Text>
+          <Text style={styles.submitButtonText}>
+            {isPreloading ? 'Loading Faculty...' : 'Continue to Teacher Chat'}
+          </Text>
         </TouchableOpacity>
 
-        {/* Teacher Info */}
-        
+        {/* Data Status */}
+
       </View>
     </SafeAreaView>
   );
@@ -279,12 +471,50 @@ const styles = StyleSheet.create({
     color: '#fff',
     textAlign: 'center',
   },
+  subtitle: {
+    fontSize: 16,
+    color: '#fff',
+    textAlign: 'center',
+    marginTop: 4,
+    opacity: 0.9,
+  },
   teacherName: {
     fontSize: 16,
     color: '#fff',
     textAlign: 'center',
-    marginTop: 5,
-    opacity: 0.9,
+    marginTop: 8,
+    opacity: 0.8,
+  },
+  preloadContainer: {
+    backgroundColor: '#e3f2fd',
+    margin: 20,
+    padding: 15,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bbdefb',
+  },
+  preloadTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1976d2',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  progressBarContainer: {
+    height: 6,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 3,
+    marginBottom: 8,
+  },
+  progressBar: {
+    height: '100%',
+    backgroundColor: '#667eea',
+    borderRadius: 3,
+  },
+  preloadMessage: {
+    fontSize: 14,
+    color: '#1565c0',
+    textAlign: 'center',
   },
   content: {
     flex: 1,
@@ -380,6 +610,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6c757d',
     textAlign: 'center',
+    marginBottom: 10,
+  },
+  refreshButton: {
+    backgroundColor: '#667eea',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginTop: 10,
+  },
+  refreshButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   selectionDisplay: {
     backgroundColor: '#f8f9fa',

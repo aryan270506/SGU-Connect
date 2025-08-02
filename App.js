@@ -1,8 +1,8 @@
-// App.js
+// App.js - Fixed version
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './Screens/firebase';
@@ -47,80 +47,154 @@ const Stack = createStackNavigator();
 
 const App = () => {
   const [isLoading, setIsLoading] = useState(true);
-  const [user, setUser] = useState(null);
-  const [userRole, setUserRole] = useState(null);
-  const [userData, setUserData] = useState(null);
-  const [sessionActive, setSessionActive] = useState(false);
+  const [initialRoute, setInitialRoute] = useState('Login');
+  const [initialParams, setInitialParams] = useState(null);
 
   useEffect(() => {
-    checkSession();
+    checkInitialRoute();
   }, []);
 
-  const checkSession = async () => {
+  const checkInitialRoute = async () => {
     try {
-      console.log('Checking session...');
+      console.log('App starting - checking for existing session...');
       
-      // Check if user data exists in AsyncStorage
-      const storedUserData = await AsyncStorage.getItem('userData');
-      const storedUserRole = await AsyncStorage.getItem('userRole');
-      
-      console.log('Stored user data:', storedUserData ? 'Found' : 'Not found');
-      console.log('Stored user role:', storedUserRole);
-      
-      if (storedUserData && storedUserRole) {
-        const parsedUserData = JSON.parse(storedUserData);
-        setUserData(parsedUserData);
-        setUserRole(storedUserRole);
-        setSessionActive(true);
-        
-        console.log('Session restored:', {
-          role: storedUserRole,
-          userData: parsedUserData
-        });
-      }
-      
-      // Listen to Firebase Auth state changes
-      const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-        console.log('Firebase auth state changed:', firebaseUser ? 'Authenticated' : 'Not authenticated');
-        setUser(firebaseUser);
-        setIsLoading(false);
+      const [userData, userRole, sessionExpiry] = await Promise.all([
+        AsyncStorage.getItem('userData'),
+        AsyncStorage.getItem('userRole'),
+        AsyncStorage.getItem('sessionExpiry')
+      ]);
+
+      console.log('Session check results:', {
+        hasUserData: !!userData,
+        userRole: userRole,
+        hasExpiry: !!sessionExpiry
       });
-      
-      // If no AsyncStorage data, still listen to Firebase but don't set session as active
-      if (!storedUserData || !storedUserRole) {
-        setIsLoading(false);
+
+      // Check if we have a valid session
+      if (userData && userRole && sessionExpiry) {
+        const expiryDate = new Date(sessionExpiry);
+        const now = new Date();
+        
+        console.log('Session expiry:', expiryDate);
+        console.log('Current time:', now);
+        console.log('Session valid:', expiryDate > now);
+
+        if (expiryDate > now) {
+          // Valid session exists
+          const parsedUserData = JSON.parse(userData);
+          
+          // FIX: Clean the userRole by removing extra quotes
+          let cleanUserRole = userRole;
+          if (typeof userRole === 'string') {
+            // Remove surrounding quotes if they exist
+            cleanUserRole = userRole.replace(/^["'](.*)["']$/, '$1');
+          }
+          
+          console.log('Raw user role:', userRole);
+          console.log('Clean user role:', cleanUserRole);
+          console.log('Valid session found for user role:', cleanUserRole);
+          console.log('User data:', parsedUserData);
+          
+          // Set initial route based on user role
+          switch (cleanUserRole) {
+            case 'teacher':
+              console.log('Setting initial route to TeacherDashboard');
+              setInitialRoute('TeacherDashboard');
+              setInitialParams(parsedUserData);
+              break;
+            case 'student':
+              console.log('Setting initial route to StudentDashboard');
+              setInitialRoute('StudentDashboard');
+              setInitialParams({ studentData: parsedUserData });
+              break;
+            case 'admin':
+              console.log('Setting initial route to AdminDashboard');
+              setInitialRoute('AdminDashboard');
+              setInitialParams(parsedUserData);
+              break;
+            case 'parent':
+              console.log('Setting initial route to ParentDashboard');
+              setInitialRoute('ParentDashboard');
+              setInitialParams(parsedUserData);
+              break;
+            default:
+              console.log('Unknown user role:', cleanUserRole, ', going to login');
+              setInitialRoute('Login');
+              break;
+          }
+        } else {
+          console.log('Session expired, clearing and going to login');
+          // Session expired, clear it
+          await AsyncStorage.multiRemove(['userData', 'userRole', 'sessionExpiry', 'lastLoginTime']);
+          setInitialRoute('Login');
+        }
+      } else {
+        console.log('No valid session found, going to login');
+        setInitialRoute('Login');
       }
-      
-      return unsubscribe;
+
+      // Also check Firebase auth state for additional validation
+      const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+        console.log('Firebase auth state:', firebaseUser ? 'Authenticated' : 'Not authenticated');
+        // Firebase auth state can be used for additional validation if needed
+      });
+
+      // Clean up the auth listener
+      setTimeout(() => {
+        unsubscribe();
+      }, 1000);
+
     } catch (error) {
-      console.error('Error checking session:', error);
+      console.error('Error checking initial route:', error);
+      setInitialRoute('Login');
+    } finally {
       setIsLoading(false);
     }
   };
 
-  // Function to clear session (called from logout)
-  const clearSession = async () => {
-    console.log('Clearing session...');
+  // Global function to clear session (can be called from anywhere)
+  const clearAppSession = async () => {
     try {
-      await AsyncStorage.multiRemove(['userData', 'userRole']);
-      setUserData(null);
-      setUserRole(null);
-      setSessionActive(false);
+      console.log('Clearing global app session...');
+      
+      const keysToRemove = [
+        'userData',
+        'userRole', 
+        'sessionExpiry',
+        'lastLoginTime',
+        // Teacher specific data
+        'teacherData',
+        'teacherMetadata',
+        'assignedStudents',
+        'facultyData',
+        'teacherAssignments',
+        'lastTeacherDataUpdate',
+        // Student specific data (if any)
+        'studentData',
+        // Admin specific data (if any)
+        'adminData',
+        // Parent specific data (if any)
+        'parentData'
+      ];
+      
+      await AsyncStorage.multiRemove(keysToRemove);
       
       // Sign out from Firebase if there's an active session
       if (auth.currentUser) {
         await auth.signOut();
       }
       
-      console.log('Session cleared successfully');
+      console.log('Global session cleared successfully');
+      return true;
     } catch (error) {
-      console.error('Error clearing session:', error);
+      console.error('Error clearing global session:', error);
+      return false;
     }
   };
 
-  // Expose clearSession function globally so logout can call it
+  // Expose clearSession function globally
   useEffect(() => {
-    global.clearAppSession = clearSession;
+    global.clearAppSession = clearAppSession;
     
     return () => {
       delete global.clearAppSession;
@@ -132,92 +206,96 @@ const App = () => {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#6f42c1" />
+        <Text style={styles.loadingText}>Checking session...</Text>
       </View>
     );
   }
 
-  // Determine initial route based on session state
-  const getInitialRouteName = () => {
-    console.log('Determining initial route:', {
-      sessionActive,
-      userRole,
-      hasUserData: !!userData
-    });
-
-    // Only navigate to dashboard if we have an active session with both role and data
-    if (sessionActive && userRole && userData) {
-      switch (userRole) {
-        case 'student':
-          console.log('Navigating to StudentDashboard');
-          return 'StudentDashboard';
-        case 'teacher':
-          console.log('Navigating to TeacherDashboard');
-          return 'TeacherDashboard';
-        case 'admin':
-          console.log('Navigating to AdminDashboard');
-          return 'AdminDashboard';
-        case 'parent':
-          console.log('Navigating to ParentDashboard');
-          return 'ParentDashboard';
-        default:
-          console.log('Unknown role, navigating to Login');
-          return 'Login';
-      }
-    }
-    
-    console.log('No active session, navigating to Login');
-    return 'Login';
-  };
+  console.log('Rendering NavigationContainer with initial route:', initialRoute);
 
   return (
     <NavigationContainer>
       <Stack.Navigator 
-        initialRouteName={getInitialRouteName()} 
-        screenOptions={{ headerShown: false }}
+        initialRouteName={initialRoute}
+        screenOptions={{ 
+          headerShown: false,
+          gestureEnabled: false // Prevent swipe back gestures that might cause navigation issues
+        }}
       >
+        {/* Login Screens */}
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="AdminLogin" component={AdminLoginScreen} />
         <Stack.Screen name="ParentLogin" component={ParentLoginScreen} />
         <Stack.Screen name="StudentLogin" component={StudentLoginScreen} />
         <Stack.Screen name="TeacherLogin" component={TeacherLoginScreen} />
         
-        {/* Dashboard Screens */}
+        {/* Dashboard Screens with initial params */}
         <Stack.Screen 
           name="StudentDashboard" 
           component={StudentDashboard}
-          initialParams={{ studentData: userData }}
+          initialParams={initialRoute === 'StudentDashboard' ? initialParams : undefined}
+          options={{
+            gestureEnabled: false // Prevent going back to login
+          }}
         />
-        <Stack.Screen name="AdminDashboard" component={AdminDashboard} />
-        <Stack.Screen name="ParentDashboard" component={ParentDashboard} />
-        <Stack.Screen name="TeacherDashboard" component={TeacherDashboard} />
+        <Stack.Screen 
+          name="AdminDashboard" 
+          component={AdminDashboard}
+          initialParams={initialRoute === 'AdminDashboard' ? initialParams : undefined}
+          options={{
+            gestureEnabled: false
+          }}
+        />
+        <Stack.Screen 
+          name="ParentDashboard" 
+          component={ParentDashboard}
+          initialParams={initialRoute === 'ParentDashboard' ? initialParams : undefined}
+          options={{
+            gestureEnabled: false
+          }}
+        />
+        <Stack.Screen 
+          name="TeacherDashboard" 
+          component={TeacherDashboard}
+          initialParams={initialRoute === 'TeacherDashboard' ? initialParams : undefined}
+          options={{
+            gestureEnabled: false
+          }}
+        />
         
-        {/* Other Screens */}
+        {/* Communication Screens */}
         <Stack.Screen name="Messages" component={MessagesScreen} />
         <Stack.Screen name="TeachersList" component={TeachersListScreen} />
-        <Stack.Screen name="StudentProfile" component={StudentProfile} />
         <Stack.Screen name="ChatScreen" component={ChatScreen} />
-        <Stack.Screen name="TeacherProfile" component={TeacherProfile} /> 
-        <Stack.Screen name="YearDivisionSelector" component={YearDivisionSelector} />
         <Stack.Screen name="StudentChat" component={StudentChatScreen} />
         <Stack.Screen name="DoubtStudentList" component={DoubtStudentList} />
-        <Stack.Screen name="RoleSelection" component={RoleSelectionScreen} />
         <Stack.Screen name="TeacherAdminChat" component={teacheradminChatScreen} />
         <Stack.Screen name="TeacherTeacherChat" component={teacherteacherChatScreen} />
         <Stack.Screen name="AdminStudentsChat" component={ClassSelectionScreen} />
         <Stack.Screen name="AdminTeacherChat" component={TeacherSelectionScreen} />
         <Stack.Screen name="AdminParentsChat" component={AdminParentsChat} />
-        <Stack.Screen name="AdminProfile" component={AdminProfile} />
         <Stack.Screen name="ParentsTeacherChat" component={ParentsTeacherChat} />
         <Stack.Screen name="TeacherStudentSender" component={TeacherStudentSenderPage} />
         <Stack.Screen name="TeacherChatScreen" component={TeacherChatScreen} />
         <Stack.Screen name="AdminChatScreen" component={AdminChatScreen} />
+        <Stack.Screen name="TeacherStudentDoubtReply" component={TeacherStudentDoubtReply} />
+        
+        {/* Profile Screens */}
+        <Stack.Screen name="StudentProfile" component={StudentProfile} />
+        <Stack.Screen name="TeacherProfile" component={TeacherProfile} /> 
+        <Stack.Screen name="AdminProfile" component={AdminProfile} />
+        
+        {/* Selection and Navigation Screens */}
+        <Stack.Screen name="YearDivisionSelector" component={YearDivisionSelector} />
+        <Stack.Screen name="RoleSelection" component={RoleSelectionScreen} />
         <Stack.Screen name="AssignmentYearDivisionSelector" component={AssignmentYearDivisionSelector} />
+        <Stack.Screen name="TeacherParentsYearDivisionSelector" component={TeacherParentsYearDivisionSelector} />
+        <Stack.Screen name="TeacherTeacherYearDivisionSelector" component={TeacherTeacherYearDivisionSelector} />
+        
+        {/* Assignment Screens */}
         <Stack.Screen name="AddAssignments" component={AddAssignmentsScreen} />
         <Stack.Screen name="SubjectsScreen" component={SubjectsScreen} />
         <Stack.Screen name="StudentAssignments" component={StudentAssignmentsScreen} />
-        <Stack.Screen name="TeacherParentsYearDivisionSelector" component={TeacherParentsYearDivisionSelector} />
-        <Stack.Screen name="TeacherTeacherYearDivisionSelector" component={TeacherTeacherYearDivisionSelector} />
-        <Stack.Screen name="TeacherStudentDoubtReply" component={TeacherStudentDoubtReply} />
       </Stack.Navigator>
     </NavigationContainer>
   );
@@ -229,6 +307,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#f8fafc',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#6f42c1',
+    fontWeight: '500',
   },
 });
 
