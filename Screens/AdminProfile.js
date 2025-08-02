@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { firebase, database } from './firebase'; // Import firebase
+import { database } from './firebase';
 import * as Haptics from 'expo-haptics';
 
 const AdminProfile = () => {

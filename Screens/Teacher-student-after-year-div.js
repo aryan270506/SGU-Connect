@@ -13,10 +13,11 @@ import {
   Alert,
   Dimensions,
   Image,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { getDatabase, ref, push, onValue, serverTimestamp } from 'firebase/database';
+import { getDatabase, ref, onValue } from 'firebase/database';
 import * as ImagePicker from 'expo-image-picker';
 
 const { width } = Dimensions.get('window');
@@ -24,7 +25,10 @@ const { width } = Dimensions.get('window');
 const TeacherChatScreen = () => {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
+  const [frontendMessages, setFrontendMessages] = useState([]); // Local messages only
   const [loading, setLoading] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [messageToDelete, setMessageToDelete] = useState(null);
   const flatListRef = useRef(null);
   
   const route = useRoute();
@@ -44,6 +48,16 @@ const TeacherChatScreen = () => {
     }
   }, [selectedYear, selectedDivision, teacherId]);
 
+  // Combine Firebase messages with local frontend messages
+  const getAllMessages = () => {
+    const combined = [...messages, ...frontendMessages];
+    return combined.sort((a, b) => {
+      const timeA = a.timestamp || new Date(a.createdAt).getTime();
+      const timeB = b.timestamp || new Date(b.createdAt).getTime();
+      return timeA - timeB;
+    });
+  };
+
   const fetchMessages = () => {
     try {
       const database = getDatabase();
@@ -56,6 +70,7 @@ const TeacherChatScreen = () => {
           const messagesList = Object.entries(messagesData).map(([key, value]) => ({
             id: key,
             ...value,
+            isFromFirebase: true, // Mark as Firebase message
           }));
           
           // Sort messages by timestamp
@@ -84,32 +99,37 @@ const TeacherChatScreen = () => {
 
     setLoading(true);
     try {
-      const database = getDatabase();
-      const chatPath = `teacher_announcements/${selectedYear.value}_${selectedDivision.value}`;
-      const messagesRef = ref(database, chatPath);
-      
+      // Create a local message object (not saved to Firebase)
       const messageData = {
+        id: `frontend_${Date.now()}_${Math.random()}`, // Unique local ID
         text: message.trim(),
         teacherId: teacherId,
         employeeId: employeeId,
         teacherName: teacherName,
-        timestamp: serverTimestamp(),
+        timestamp: Date.now(),
         year: selectedYear.value,
         division: selectedDivision.value,
         messageType: 'announcement',
         type: 'text',
         createdAt: new Date().toISOString(),
+        isFromFirebase: false, // Mark as local frontend message
       };
 
-      await push(messagesRef, messageData);
+      // Add to local frontend messages array
+      setFrontendMessages(prev => [...prev, messageData]);
       setMessage('');
       
+      // Auto scroll to bottom
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+      
       // Show success feedback
-      Alert.alert('Success', 'Message sent successfully!');
+      Alert.alert('Success', 'Message displayed locally (not saved to database)');
       
     } catch (error) {
-      console.error('Error sending message:', error);
-      Alert.alert('Error', 'Failed to send message. Please try again.');
+      console.error('Error displaying message:', error);
+      Alert.alert('Error', 'Failed to display message. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -118,34 +138,83 @@ const TeacherChatScreen = () => {
   const sendImage = async (imageUri) => {
     setLoading(true);
     try {
-      const database = getDatabase();
-      const chatPath = `teacher_announcements/${selectedYear.value}_${selectedDivision.value}`;
-      const messagesRef = ref(database, chatPath);
-      
+      // Create a local image message object (not saved to Firebase)
       const messageData = {
+        id: `frontend_img_${Date.now()}_${Math.random()}`, // Unique local ID
         imageUri: imageUri,
         teacherId: teacherId,
         employeeId: employeeId,
         teacherName: teacherName,
-        timestamp: serverTimestamp(),
+        timestamp: Date.now(),
         year: selectedYear.value,
         division: selectedDivision.value,
         messageType: 'announcement',
         type: 'image',
         createdAt: new Date().toISOString(),
+        isFromFirebase: false, // Mark as local frontend message
       };
 
-      await push(messagesRef, messageData);
+      // Add to local frontend messages array
+      setFrontendMessages(prev => [...prev, messageData]);
+      
+      // Auto scroll to bottom
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
       
       // Show success feedback
-      Alert.alert('Success', 'Image sent successfully!');
+      Alert.alert('Success', 'Image displayed locally (not saved to database)');
       
     } catch (error) {
-      console.error('Error sending image:', error);
-      Alert.alert('Error', 'Failed to send image. Please try again.');
+      console.error('Error displaying image:', error);
+      Alert.alert('Error', 'Failed to display image. Please try again.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const deleteMessage = async (messageId) => {
+    try {
+      // Check if it's a local frontend message
+      const isLocalMessage = messageId.startsWith('frontend_');
+      
+      if (isLocalMessage) {
+        // Remove from local frontend messages
+        setFrontendMessages(prev => prev.filter(msg => msg.id !== messageId));
+        Alert.alert('Success', 'Local message removed');
+      } else {
+        // Handle Firebase message deletion (if needed)
+        const database = getDatabase();
+        const chatPath = `teacher_announcements/${selectedYear.value}_${selectedDivision.value}`;
+        const messageRef = ref(database, `${chatPath}/${messageId}`);
+        
+        await remove(messageRef);
+        Alert.alert('Success', 'Firebase message deleted');
+      }
+      
+      setShowDeleteModal(false);
+      setMessageToDelete(null);
+      
+    } catch (error) {
+      console.error('Error deleting message:', error);
+      Alert.alert('Error', 'Failed to delete message. Please try again.');
+    }
+  };
+
+  const handleDeleteMessage = (item) => {
+    setMessageToDelete(item);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = () => {
+    if (messageToDelete) {
+      deleteMessage(messageToDelete.id);
+    }
+  };
+
+  const cancelDelete = () => {
+    setShowDeleteModal(false);
+    setMessageToDelete(null);
   };
 
   const showImagePicker = () => {
@@ -201,7 +270,7 @@ const TeacherChatScreen = () => {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Gallery permission is required to select photos.');
+        Alert.log('Permission Denied', 'Gallery permission is required to select photos.');
         return;
       }
 
@@ -245,16 +314,38 @@ const TeacherChatScreen = () => {
     }
   };
 
+  const isMyMessage = (item) => {
+    return item.teacherId === teacherId || item.employeeId === employeeId;
+  };
+
   const renderMessage = ({ item }) => (
     <View style={styles.messageContainer}>
       <View style={styles.messageHeader}>
         <View style={styles.teacherInfo}>
           <Ionicons name="person-circle" size={20} color="#667eea" />
-          <Text style={styles.teacherName}>{item.teacherName}</Text>
+          <Text style={styles.teacherName}>
+            {item.teacherName}
+            {!item.isFromFirebase && (
+              <Text style={styles.localLabel}> (Local)</Text>
+            )}
+          </Text>
         </View>
-        <Text style={styles.timestamp}>{formatTime(item.createdAt)}</Text>
+        <View style={styles.headerRight}>
+          <Text style={styles.timestamp}>{formatTime(item.createdAt)}</Text>
+          {isMyMessage(item) && (
+            <TouchableOpacity 
+              style={styles.deleteButton}
+              onPress={() => handleDeleteMessage(item)}
+            >
+              <Ionicons name="trash-outline" size={16} color="#ff4757" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
-      <View style={styles.messageBubble}>
+      <View style={[
+        styles.messageBubble,
+        !item.isFromFirebase && styles.localMessageBubble
+      ]}>
         {item.type === 'image' ? (
           <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
         ) : (
@@ -271,7 +362,64 @@ const TeacherChatScreen = () => {
       <Text style={styles.emptySubText}>
         Send the first announcement to {selectedYear?.label} - {selectedDivision?.label}
       </Text>
+      
     </View>
+  );
+
+  const DeleteConfirmationModal = () => (
+    <Modal
+      transparent={true}
+      visible={showDeleteModal}
+      animationType="fade"
+      onRequestClose={cancelDelete}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Ionicons name="warning" size={24} color="#ff4757" />
+            <Text style={styles.modalTitle}>Delete Message</Text>
+          </View>
+          
+          <Text style={styles.modalMessage}>
+            Are you sure you want to delete this message? This action cannot be undone.
+          </Text>
+          
+          {messageToDelete && (
+            <View style={styles.messagePreview}>
+              {messageToDelete.type === 'image' ? (
+                <View style={styles.imagePreview}>
+                  <Ionicons name="image" size={16} color="#999" />
+                  <Text style={styles.previewText}>Image message</Text>
+                </View>
+              ) : (
+                <Text style={styles.previewText} numberOfLines={2}>
+                  "{messageToDelete.text}"
+                </Text>
+              )}
+              {!messageToDelete.isFromFirebase && (
+                <Text style={styles.localPreviewNote}>(Local message)</Text>
+              )}
+            </View>
+          )}
+          
+          <View style={styles.modalButtons}>
+            <TouchableOpacity 
+              style={[styles.modalButton, styles.cancelButton]}
+              onPress={cancelDelete}
+            >
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.modalButton, styles.deleteButtonModal]}
+              onPress={confirmDelete}
+            >
+              <Text style={styles.deleteButtonText}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 
   return (
@@ -291,10 +439,10 @@ const TeacherChatScreen = () => {
           <Text style={styles.headerTitle}>
             {selectedYear?.label} - {selectedDivision?.label}
           </Text>
-          <Text style={styles.headerSubtitle}>Teacher Announcements</Text>
+          <Text style={styles.headerSubtitle}>Teacher Announcements </Text>
         </View>
         
-        <View style={styles.headerRight}>
+        <View style={styles.headerRightIcon}>
           <Ionicons name="megaphone" size={24} color="#fff" />
         </View>
       </View>
@@ -306,7 +454,7 @@ const TeacherChatScreen = () => {
         {/* Messages List */}
         <FlatList
           ref={flatListRef}
-          data={messages}
+          data={getAllMessages()}
           renderItem={renderMessage}
           keyExtractor={(item) => item.id}
           style={styles.messagesList}
@@ -329,7 +477,7 @@ const TeacherChatScreen = () => {
             
             <TextInput
               style={styles.textInput}
-              placeholder="Type Your Announcement..."
+              placeholder="Type Your Announcement (Local Only)..."
               placeholderTextColor="#999"
               value={message}
               onChangeText={setMessage}
@@ -364,6 +512,9 @@ const TeacherChatScreen = () => {
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Delete Confirmation Modal */}
+      <DeleteConfirmationModal />
     </SafeAreaView>
   );
 };
@@ -402,7 +553,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 2,
   },
-  headerRight: {
+  headerRightIcon: {
     padding: 8,
   },
   content: {
@@ -433,6 +584,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
   },
+  frontendNote: {
+    fontSize: 12,
+    color: '#ff6b35',
+    textAlign: 'center',
+    marginTop: 16,
+    fontStyle: 'italic',
+  },
   messageContainer: {
     marginBottom: 16,
   },
@@ -452,9 +610,24 @@ const styles = StyleSheet.create({
     color: '#667eea',
     marginLeft: 6,
   },
+  localLabel: {
+    fontSize: 12,
+    color: '#ff6b35',
+    fontWeight: '400',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   timestamp: {
     fontSize: 12,
     color: '#999',
+    marginRight: 8,
+  },
+  deleteButton: {
+    padding: 4,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255, 71, 87, 0.1)',
   },
   messageBubble: {
     backgroundColor: '#667eea',
@@ -467,6 +640,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
     elevation: 2,
+  },
+  localMessageBubble: {
+    backgroundColor: '#ff6b35',
+    borderLeftWidth: 3,
+    borderLeftColor: '#ff8c42',
   },
   messageText: {
     color: '#fff',
@@ -534,10 +712,93 @@ const styles = StyleSheet.create({
   },
   inputHint: {
     fontSize: 12,
-    color: '#667eea',
+    color: '#999',
     flex: 1,
     textAlign: 'right',
     marginLeft: 8,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 24,
+    margin: 20,
+    maxWidth: width * 0.9,
+    width: '100%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginLeft: 8,
+  },
+  modalMessage: {
+    fontSize: 16,
+    color: '#666',
+    lineHeight: 22,
+    marginBottom: 16,
+  },
+  messagePreview: {
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 20,
+  },
+  imagePreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  previewText: {
+    fontSize: 14,
+    color: '#666',
+    fontStyle: 'italic',
+    marginLeft: 4,
+  },
+  localPreviewNote: {
+    fontSize: 12,
+    color: '#ff6b35',
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginHorizontal: 4,
+  },
+  cancelButton: {
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '500',
+  },
+  deleteButtonModal: {
+    backgroundColor: '#ff4757',
+  },
+  deleteButtonText: {
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: '600',
   },
 });
 

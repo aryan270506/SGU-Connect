@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { database } from './firebase';
-import { ref, onValue, push, set, off, query, orderByChild, equalTo } from 'firebase/database';
+import { ref, onValue, push, set, off, query, orderByChild, equalTo, remove } from 'firebase/database';
 import * as ImagePicker from 'expo-image-picker';
 
 const { width } = Dimensions.get('window');
@@ -153,6 +153,54 @@ const AdminTeacherChat = () => {
       if (unsubscribe) unsubscribe();
     };
   }, [selectedGroup]);
+
+  // Delete message function
+  const deleteMessage = async (messageId) => {
+    const chatKey = getCurrentChatKey();
+    
+    if (selectedTeacher) {
+      // For teacher chats - remove from local state only
+      setMessages(prev => ({
+        ...prev,
+        [chatKey]: prev[chatKey]?.filter(msg => msg.id !== messageId) || [],
+      }));
+    } else if (selectedGroup) {
+      // For group chats - remove from Firebase
+      try {
+        const year = selectedGroup.split(' ')[0];
+        const messageRef = ref(database, `chats/year_${year}/${messageId}`);
+        await remove(messageRef);
+        // The Firebase listener will automatically update the local state
+      } catch (error) {
+        console.error('Error deleting message from Firebase:', error);
+        Alert.alert('Error', 'Failed to delete message');
+      }
+    }
+  };
+
+  // Handle long press on message
+  const handleMessageLongPress = (message) => {
+    // Only allow admin to delete their own messages
+    if (message.sender !== 'Admin') {
+      return;
+    }
+
+    Alert.alert(
+      'Delete Message',
+      'Are you sure you want to delete this message?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteMessage(message.id),
+        },
+      ]
+    );
+  };
 
   // Send text message
   const sendMessage = async () => {
@@ -388,10 +436,15 @@ const AdminTeacherChat = () => {
           styles.messageContent,
           isSent ? styles.sentMessageContent : styles.receivedMessageContent
         ]}>
-          <View style={[
-            styles.messageBubble,
-            isSent ? styles.sentMessageBubble : styles.receivedMessageBubble
-          ]}>
+          <TouchableOpacity
+            style={[
+              styles.messageBubble,
+              isSent ? styles.sentMessageBubble : styles.receivedMessageBubble
+            ]}
+            onLongPress={() => handleMessageLongPress(item)}
+            delayLongPress={500}
+            activeOpacity={0.8}
+          >
             {item.type === 'image' ? (
               <Image 
                 source={{ uri: item.imageUri }} 
@@ -403,7 +456,7 @@ const AdminTeacherChat = () => {
                 {item.text}
               </Text>
             )}
-          </View>
+          </TouchableOpacity>
           <Text style={[
             styles.messageTime,
             isSent ? styles.sentMessageTime : styles.receivedMessageTime

@@ -66,6 +66,35 @@ const StudentChatScreen = () => {
     setNewMessage('');
   };
 
+  const handleDeleteMessage = (messageId) => {
+    Alert.alert(
+      'Delete Message',
+      'Are you sure you want to delete this message?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setMessages(prevMessages => 
+              prevMessages.filter(message => message.id !== messageId)
+            );
+          },
+        },
+      ]
+    );
+  };
+
+  const handleLongPress = (item) => {
+    // Only allow deletion of teacher's messages
+    if (item.sender === 'teacher') {
+      handleDeleteMessage(item.id);
+    }
+  };
+
   const sendImage = async (imageUri) => {
     setLoading(true);
     try {
@@ -177,10 +206,15 @@ const StudentChatScreen = () => {
     const isTeacher = item.sender === 'teacher';
     
     return (
-      <View style={[
-        styles.messageContainer,
-        isTeacher ? styles.teacherMessage : styles.studentMessage
-      ]}>
+      <TouchableOpacity
+        style={[
+          styles.messageContainer,
+          isTeacher ? styles.teacherMessage : styles.studentMessage
+        ]}
+        onLongPress={() => handleLongPress(item)}
+        delayLongPress={500}
+        activeOpacity={isTeacher ? 0.7 : 1}
+      >
         {!isTeacher && (
           <View style={styles.studentInfo}>
             <Image 
@@ -203,7 +237,8 @@ const StudentChatScreen = () => {
           )}
         </View>
         <Text style={styles.timeText}>{item.time}</Text>
-      </View>
+        
+      </TouchableOpacity>
     );
   };
 
@@ -350,6 +385,12 @@ const styles = StyleSheet.create({
   timeText: {
     fontSize: 12,
     color: '#888',
+  },
+  deleteHint: {
+    fontSize: 10,
+    color: '#aaa',
+    fontStyle: 'italic',
+    marginTop: 2,
   },
   inputContainer: {
     backgroundColor: '#fff',

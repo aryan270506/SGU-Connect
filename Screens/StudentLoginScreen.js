@@ -15,7 +15,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
-
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { getDatabase, ref, get } from 'firebase/database';
 import { initializeApp } from 'firebase/app';
@@ -56,6 +56,9 @@ const StudentLoginScreen = () => {
   const buttonAnim = useState(new Animated.Value(0))[0];
 
   useEffect(() => {
+    // Check if user is already logged in
+    checkExistingSession();
+    
     // Start animations when component mounts 
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -92,6 +95,31 @@ const StudentLoginScreen = () => {
       ])
     ]).start();
   }, []);
+
+  const checkExistingSession = async () => {
+    try {
+      const userData = await AsyncStorage.getItem('userData');
+      const userRole = await AsyncStorage.getItem('userRole');
+      
+      if (userData && userRole === 'student') {
+        // User is already logged in, navigate to dashboard
+        navigation.navigate('StudentDashboard', {
+          studentData: JSON.parse(userData)
+        });
+      }
+    } catch (error) {
+      console.error('Error checking existing session:', error);
+    }
+  };
+
+  const saveUserSession = async (studentData) => {
+    try {
+      await AsyncStorage.setItem('userData', JSON.stringify(studentData));
+      await AsyncStorage.setItem('userRole', 'student');
+    } catch (error) {
+      console.error('Error saving user session:', error);
+    }
+  };
 
   const handleLogin = async () => {
     if (!rollNumber || !password) {
@@ -153,18 +181,24 @@ const StudentLoginScreen = () => {
         }
       }
 
+      // Prepare student data
+      const studentData = {
+        PRN: foundStudent.PRN,
+        Name: foundStudent.Name,
+        Email: foundStudent.Email,
+        Division: foundStudent.Division,
+        Branch: foundStudent.Branch,
+        Year: foundStudent.Year || '',
+        password: password
+      };
+
+      // Save session data
+      await saveUserSession(studentData);
+
       // Login successful, navigate to dashboard with student data
-            navigation.navigate('StudentDashboard', {
-              studentData: {
-                PRN: foundStudent.PRN,
-                Name: foundStudent.Name,
-                Email: foundStudent.Email,
-                Division: foundStudent.Division,
-                Branch: foundStudent.Branch,
-                Year: foundStudent.Year || '',
-                password: password
-              }
-            });
+      navigation.navigate('StudentDashboard', {
+        studentData: studentData
+      });
       
     } catch (error) {
       Alert.alert('Error', 'Login failed: ' + error.message);

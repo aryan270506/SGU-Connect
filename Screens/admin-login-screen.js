@@ -15,7 +15,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { firebase, database } from './firebase'; // Import the firebase database
+import { database } from './firebase';
 
 const { width } = Dimensions.get('window');
 

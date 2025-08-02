@@ -12,6 +12,7 @@ import {
   StatusBar,
   Image,
   Alert,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -48,6 +49,7 @@ const ChatScreen = () => {
   ]);
   
   const [inputText, setInputText] = useState('');
+  const [selectedMessageId, setSelectedMessageId] = useState(null);
   const flatListRef = useRef(null);
 
   const formatTime = (timestamp) => {
@@ -89,6 +91,40 @@ const ChatScreen = () => {
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
+  };
+
+  const deleteMessage = (messageId) => {
+    Alert.alert(
+      'Delete Message',
+      'Are you sure you want to delete this message?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setMessages(prev => prev.filter(msg => msg.id !== messageId));
+            setSelectedMessageId(null);
+          },
+        },
+      ]
+    );
+  };
+
+  const handleLongPress = (messageId, sender) => {
+    if (sender === 'me') {
+      setSelectedMessageId(messageId);
+      deleteMessage(messageId);
+    }
+  };
+
+  const handlePress = () => {
+    if (selectedMessageId) {
+      setSelectedMessageId(null);
+    }
   };
 
   const showImagePicker = () => {
@@ -170,29 +206,40 @@ const ChatScreen = () => {
 
   const renderMessage = ({ item }) => {
     const isMe = item.sender === 'me';
+    const isSelected = selectedMessageId === item.id;
     
     return (
-      <View style={[styles.messageContainer, isMe ? styles.myMessage : styles.otherMessage]}>
-        <View style={[styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
-          {item.type === 'image' ? (
-            <View>
-              <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
-              <Text style={[styles.timestamp, isMe ? styles.myTimestamp : styles.otherTimestamp]}>
-                {formatTime(item.timestamp)}
-              </Text>
-            </View>
-          ) : (
-            <View>
-              <Text style={[styles.messageText, isMe ? styles.myText : styles.otherText]}>
-                {item.text}
-              </Text>
-              <Text style={[styles.timestamp, isMe ? styles.myTimestamp : styles.otherTimestamp]}>
-                {formatTime(item.timestamp)}
-              </Text>
-            </View>
-          )}
+      <TouchableWithoutFeedback
+        onPress={handlePress}
+        onLongPress={() => handleLongPress(item.id, item.sender)}
+      >
+        <View style={[styles.messageContainer, isMe ? styles.myMessage : styles.otherMessage]}>
+          <View style={[
+            styles.messageBubble, 
+            isMe ? styles.myBubble : styles.otherBubble,
+            isSelected && styles.selectedBubble
+          ]}>
+            {item.type === 'image' ? (
+              <View>
+                <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
+                <Text style={[styles.timestamp, isMe ? styles.myTimestamp : styles.otherTimestamp]}>
+                  {formatTime(item.timestamp)}
+                </Text>
+              </View>
+            ) : (
+              <View>
+                <Text style={[styles.messageText, isMe ? styles.myText : styles.otherText]}>
+                  {item.text}
+                </Text>
+                <Text style={[styles.timestamp, isMe ? styles.myTimestamp : styles.otherTimestamp]}>
+                  {formatTime(item.timestamp)}
+                </Text>
+              </View>
+            )}
+          </View>
+          
         </View>
-      </View>
+      </TouchableWithoutFeedback>
     );
   };
 
@@ -211,8 +258,7 @@ const ChatScreen = () => {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Chat</Text>
         <View style={styles.onlineIndicator}>
-          <View style={styles.onlineDot} />
-          <Text style={styles.onlineText}>Online</Text>
+         
         </View>
       </View>
 
@@ -276,7 +322,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 25,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#e1e1e1',
@@ -314,6 +360,7 @@ const styles = StyleSheet.create({
   },
   messageContainer: {
     marginVertical: 4,
+    position: 'relative',
   },
   myMessage: {
     alignItems: 'flex-end',
@@ -343,6 +390,10 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
+  selectedBubble: {
+    opacity: 0.7,
+    transform: [{ scale: 0.98 }],
+  },
   messageText: {
     fontSize: 16,
     lineHeight: 20,
@@ -369,6 +420,15 @@ const styles = StyleSheet.create({
   },
   otherTimestamp: {
     color: '#999',
+  },
+  messageActions: {
+    marginTop: 4,
+    alignItems: 'flex-end',
+  },
+  deleteHint: {
+    fontSize: 10,
+    color: '#999',
+    fontStyle: 'italic',
   },
   inputContainer: {
     flexDirection: 'row',

@@ -11,31 +11,48 @@ import {
   TouchableOpacity
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { auth, database } from './firebase';
+import { auth } from './firebase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const StudentProfile = ({ route, navigation }) => {
-  const [studentData, setStudentData] = useState(null);
-  const [loading, setLoading] = useState(false); // Changed to false since we have props data
+const StudentProfile = ({ studentData: propStudentData, navigation }) => {
+  const [studentData, setStudentData] = useState(propStudentData || null);
+  const [loading, setLoading] = useState(!propStudentData);
 
   useEffect(() => {
-    console.log('Route params:', route.params); // Debug log
-    console.log('Props student data:', route.params?.studentData); // Debug log
-
-    // First check if we have student data in props
-    if (route.params?.studentData) {
-      console.log('Using student data from props');
-      setStudentData(normalizeStudentData(route.params.studentData));
+    // Only load from AsyncStorage if no data was passed as props
+    if (!propStudentData) {
+      loadStudentData();
     } else {
-      console.log('No student data in props, fetching from Firebase');
-      fetchStudentData();
+      setStudentData(propStudentData);
+      setLoading(false);
     }
-  }, [route.params]);
+  }, [propStudentData]);
+
+  const loadStudentData = async () => {
+    try {
+      console.log('Loading student data from AsyncStorage in Profile');
+      const storedData = await AsyncStorage.getItem('userData');
+      if (storedData) {
+        const data = JSON.parse(storedData);
+        console.log('Retrieved data from AsyncStorage in Profile:', data);
+        setStudentData(normalizeStudentData(data));
+      } else {
+        console.log('No student data available in Profile');
+        Alert.alert('Error', 'No student data available');
+      }
+    } catch (error) {
+      console.error('Error loading student data in Profile:', error);
+      Alert.alert('Error', `Failed to load student data: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const normalizeStudentData = (data) => {
-    console.log('Normalizing student data:', data); // Debug log
+    console.log('Normalizing student data:', data);
     return {
-      Name: data.Name || data.name || 'Not available',
-      PRN: data.PRN || data.prn || 'Not available',
+      Name: data.Name || data.name || data.full_id || 'Not available',
+      PRN: data.PRN || data.prn || data.id || 'Not available',
       Email: data.Email || data.email || 'Not available',
       Branch: data.Branch || data.branch || 'Not specified',
       Division: data.Division || data.division || 'Not specified',
@@ -43,56 +60,6 @@ const StudentProfile = ({ route, navigation }) => {
       password: data.password || '',
       ...data
     };
-  };
-
-  const fetchStudentData = async () => {
-    setLoading(true);
-    const user = auth.currentUser;
-    
-    if (!user?.email) {
-      Alert.alert('Error', 'No authenticated user found');
-      setLoading(false);
-      return;
-    }
-
-    try {
-      console.log('Fetching student data for email:', user.email); // Debug log
-      const snapshot = await database.ref('students').once('value');
-      
-      if (!snapshot.exists()) {
-        Alert.alert('Error', 'No student data available in database');
-        setLoading(false);
-        return;
-      }
-
-      let foundStudent = null;
-      
-      snapshot.forEach((childSnapshot) => {
-        const student = childSnapshot.val();
-        console.log('Checking student:', student.Email); // Debug log
-        if (
-  (student.Email && student.Email.toLowerCase() === user.email.toLowerCase()) ||
-  (student.email && student.email.toLowerCase() === user.email.toLowerCase())
-) { // Case-insensitive check
-          foundStudent = student;
-          return true; // Break the loop
-        }
-      });
-
-      if (foundStudent) {
-        console.log('Found student data:', foundStudent); // Debug log
-        setStudentData(normalizeStudentData(foundStudent));
-      } else {
-        Alert.alert('Error', `No student found with email: ${user.email}`);
-        console.log('Available emails:', 
-          Object.values(snapshot.val()).map(s => s.Email || s.email)); // Debug log
-      }
-    } catch (error) {
-      Alert.alert('Error', `Failed to fetch data: ${error.message}`);
-      console.error('Fetch error:', error); // Debug log
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleLogout = () => {
@@ -106,10 +73,25 @@ const StudentProfile = ({ route, navigation }) => {
           style: 'destructive',
           onPress: async () => {
             try {
+              console.log('Starting logout process...');
               
-              await auth.signOut();
-              navigation.navigate('StudentLogin');
+              // Clear AsyncStorage data
+              await AsyncStorage.multiRemove(['userData', 'userRole']);
+              
+              // Sign out from Firebase if there's an active session
+              if (auth.currentUser) {
+                await auth.signOut();
+              }
+              
+              console.log('Logout successful, navigating to Login');
+              
+              // Navigate to main login screen and reset navigation stack
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+              });
             } catch (error) {
+              console.error('Logout error:', error);
               Alert.alert('Logout Error', error.message);
             }
           },
@@ -147,7 +129,7 @@ const StudentProfile = ({ route, navigation }) => {
           <Text style={styles.errorText}>Unable to load student data</Text>
           <TouchableOpacity 
             style={styles.retryButton} 
-            onPress={fetchStudentData}
+            onPress={loadStudentData}
           >
             <Text style={styles.retryButtonText}>Try Again</Text>
           </TouchableOpacity>
@@ -217,7 +199,7 @@ const StudentProfile = ({ route, navigation }) => {
 
         <View style={styles.footer}>
           <Text style={styles.footerText}>
-            User ID: {auth.currentUser?.uid || 'N/A'}
+            Session ID: {auth.currentUser?.uid || 'Active Session'}
           </Text>
           <Text style={styles.footerText}>
             Last updated: {new Date().toLocaleDateString()}
@@ -271,6 +253,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#ffffff',
     marginBottom: 10,
+  },
+  headerSubtitle: {
+    fontSize: 16,
+    color: '#ffffff',
+    opacity: 0.9,
   },
   profileCard: {
     backgroundColor: '#ffffff',

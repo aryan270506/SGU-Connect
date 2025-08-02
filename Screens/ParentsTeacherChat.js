@@ -81,6 +81,37 @@ const ParentsTeacherChat = () => {
     }, 200);
   }, [inputText]);
 
+  // Delete message function
+  const deleteMessage = useCallback((messageId) => {
+    Alert.alert(
+      'Delete Message',
+      'Are you sure you want to delete this message?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setMessages(prevMessages => 
+              prevMessages.filter(message => message.id !== messageId)
+            );
+          },
+        },
+      ]
+    );
+  }, []);
+
+  // Handle long press on message
+  const handleMessageLongPress = useCallback((message) => {
+    // Only allow deleting own messages (parent messages)
+    if (message.sender === 'parent') {
+      deleteMessage(message.id);
+    }
+  }, [deleteMessage]);
+
   // Send image message
   const sendImage = async (imageUri) => {
     setImageLoading(true);
@@ -159,33 +190,33 @@ const ParentsTeacherChat = () => {
   };
 
   // Open gallery
-  const openGallery = async () => {
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Gallery permission is required to select photos.');
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        quality: 0.8,
-        allowsMultipleSelection: false,
-        base64: false,
-        exif: false,
-        selectionLimit: 1,
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        await sendImage(result.assets[0].uri);
-      }
-    } catch (error) {
-      console.error('Error opening gallery:', error);
-      Alert.alert('Error', 'Failed to open gallery. Please try again.');
+ const openGallery = async () => {
+  try {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'Gallery permission is required to select photos.');
+      return;
     }
-  };
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+      allowsMultipleSelection: false,
+      base64: false,
+      exif: false,
+      selectionLimit: 1,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      await sendImage(result.assets[0].uri);
+    }
+  } catch (error) {
+    console.error('Error opening gallery:', error);
+    Alert.alert('Error', 'Failed to open gallery. Please try again.');
+  }
+};
 
   const renderMessage = useCallback(({ item }) => {
     const isParent = item.sender === 'parent';
@@ -196,10 +227,15 @@ const ParentsTeacherChat = () => {
     });
 
     return (
-      <View style={[
-        styles.messageContainer, 
-        isParent ? styles.parentMessage : styles.teacherMessage
-      ]}>
+      <TouchableOpacity
+        style={[
+          styles.messageContainer, 
+          isParent ? styles.parentMessage : styles.teacherMessage
+        ]}
+        onLongPress={() => handleMessageLongPress(item)}
+        activeOpacity={isParent ? 0.7 : 1}
+        disabled={!isParent} // Only enable long press for parent messages
+      >
         {/* Sender name for teacher messages */}
         {!isParent && (
           <Text style={styles.senderName}>Teacher</Text>
@@ -241,9 +277,16 @@ const ParentsTeacherChat = () => {
             </View>
           )}
         </View>
-      </View>
+
+        {/* Delete hint for parent messages */}
+        {isParent && (
+          <View style={styles.deleteHint}>
+            <Text style={styles.deleteHintText}>Long press to delete</Text>
+          </View>
+        )}
+      </TouchableOpacity>
     );
-  }, []);
+  }, [handleMessageLongPress]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -355,6 +398,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 1,
+    position: 'relative',
   },
   parentMessage: {
     alignSelf: 'flex-end',
@@ -408,6 +452,20 @@ const styles = StyleSheet.create({
   },
   readStatus: {
     marginLeft: 4,
+  },
+  deleteHint: {
+    position: 'absolute',
+    top: -20,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    opacity: 0,
+  },
+  deleteHintText: {
+    color: 'white',
+    fontSize: 10,
   },
   inputContainer: {
     flexDirection: 'row',

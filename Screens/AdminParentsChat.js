@@ -13,10 +13,11 @@ import {
   Alert,
   Image,
   ActivityIndicator,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { database, auth } from './firebase';
+import { database } from './firebase';
 
 const AdminParentsChat = () => {
   const [selectedYear, setSelectedYear] = useState(null);
@@ -24,6 +25,7 @@ const AdminParentsChat = () => {
   const [currentMessage, setCurrentMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
+  const [deletingMessageId, setDeletingMessageId] = useState(null);
 
   // Years data
   const years = [
@@ -67,6 +69,7 @@ const AdminParentsChat = () => {
             ...message,
             sender: 'Admin',
             timestamp: new Date(message.timestamp),
+            source: 'admin', // Add source to identify where message came from
           });
         });
       }
@@ -82,6 +85,8 @@ const AdminParentsChat = () => {
                 ...message,
                 sender: 'Parent',
                 timestamp: new Date(message.timestamp),
+                source: 'parent', // Add source to identify where message came from
+                parentId: parentNode.key, // Store parent ID for deletion
               });
             }
           });
@@ -128,16 +133,10 @@ const AdminParentsChat = () => {
     if (currentMessage.trim() === '' || !selectedYear) return;
     
     try {
-      const currentUser = auth.currentUser;
-      if (!currentUser) {
-        Alert.alert('Authentication Error', 'Please log in first');
-        return;
-      }
-
       const newMessage = {
         text: currentMessage,
         sender: 'Admin',
-        senderId: currentUser.uid,
+        senderId: 'admin', // Use a static admin ID since you're not using Firebase Auth
         timestamp: new Date().toISOString(),
         type: 'text'
       };
@@ -159,16 +158,10 @@ const AdminParentsChat = () => {
     
     setImageLoading(true);
     try {
-      const currentUser = auth.currentUser;
-      if (!currentUser) {
-        Alert.alert('Authentication Error', 'Please log in first');
-        return;
-      }
-
       const newMessage = {
         imageUri: imageUri,
         sender: 'Admin',
-        senderId: currentUser.uid,
+        senderId: 'admin', // Use a static admin ID since you're not using Firebase Auth
         timestamp: new Date().toISOString(),
         type: 'image'
       };
@@ -185,6 +178,61 @@ const AdminParentsChat = () => {
     } finally {
       setImageLoading(false);
     }
+  };
+
+  // Delete message function
+  const deleteMessage = async (messageId, messageSource, parentId = null) => {
+    setDeletingMessageId(messageId);
+    
+    try {
+      let messageRef;
+      
+      if (messageSource === 'admin') {
+        // Delete from admin messages
+        messageRef = database.ref(`admin_parent_messages/${selectedYear}/${messageId}`);
+      } else if (messageSource === 'parent' && parentId) {
+        // Delete from parent messages
+        messageRef = database.ref(`parent_messages/${parentId}/${messageId}`);
+      }
+      
+      if (messageRef) {
+        await messageRef.remove();
+        
+      }
+      
+    } catch (error) {
+      console.error('Error deleting message:', error);
+      Alert.alert('Error', 'Failed to delete message. Please try again.');
+    } finally {
+      setDeletingMessageId(null);
+    }
+  };
+
+  // Handle long press on message
+  const handleLongPressMessage = (item) => {
+    // Only allow deletion of admin messages or if user has permission for parent messages
+    const canDeleteParentMessage = item.sender === 'Parent'; // You can add more conditions here
+    const canDeleteAdminMessage = item.sender === 'Admin';
+    
+    if (!canDeleteAdminMessage && !canDeleteParentMessage) {
+      return;
+    }
+
+    Alert.alert(
+      'Delete Message',
+      `Are you sure you want to delete this ${item.sender.toLowerCase()} message?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteMessage(item.id, item.source, item.parentId),
+        },
+      ]
+    );
   };
 
   // Show image picker options
@@ -268,39 +316,54 @@ const AdminParentsChat = () => {
   };
 
   const renderMessageItem = ({ item }) => (
-    <View style={[
-      styles.messageContainer, 
-      item.sender === 'Parent' && styles.parentMessageContainer
-    ]}>
+    <TouchableWithoutFeedback
+      onLongPress={() => handleLongPressMessage(item)}
+      delayLongPress={500}
+    >
       <View style={[
-        styles.messageContent,
-        item.sender === 'Parent' && styles.parentMessageContent
+        styles.messageContainer, 
+        item.sender === 'Parent' && styles.parentMessageContainer,
+        deletingMessageId === item.id && styles.deletingMessage
       ]}>
         <View style={[
-          styles.messageBubble,
-          item.sender === 'Parent' && styles.parentMessageBubble
+          styles.messageContent,
+          item.sender === 'Parent' && styles.parentMessageContent
         ]}>
-          {item.type === 'image' ? (
-            <Image 
-              source={{ uri: item.imageUri }} 
-              style={styles.messageImage}
-              resizeMode="cover"
-            />
-          ) : (
-            <Text style={[
-              styles.messageText,
-              item.sender === 'Parent' && styles.parentMessageText
-            ]}>
-              {item.text}
-            </Text>
-          )}
+          <View style={[
+            styles.messageBubble,
+            item.sender === 'Parent' && styles.parentMessageBubble
+          ]}>
+            {deletingMessageId === item.id && (
+              <View style={styles.deletingOverlay}>
+                <ActivityIndicator size="small" color="#fff" />
+              </View>
+            )}
+            {item.type === 'image' ? (
+              <Image 
+                source={{ uri: item.imageUri }} 
+                style={[
+                  styles.messageImage,
+                  deletingMessageId === item.id && styles.deletingContent
+                ]}
+                resizeMode="cover"
+              />
+            ) : (
+              <Text style={[
+                styles.messageText,
+                item.sender === 'Parent' && styles.parentMessageText,
+                deletingMessageId === item.id && styles.deletingContent
+              ]}>
+                {item.text}
+              </Text>
+            )}
+          </View>
+          <Text style={styles.messageTime}>
+            {item.sender === 'Parent' ? 'Parent' : 'You'} • 
+            {item.timestamp ? `${item.timestamp.getHours()}:${String(item.timestamp.getMinutes()).padStart(2, '0')}` : ''}
+          </Text>
         </View>
-        <Text style={styles.messageTime}>
-          {item.sender === 'Parent' ? 'Parent' : 'You'} • 
-          {item.timestamp ? `${item.timestamp.getHours()}:${String(item.timestamp.getMinutes()).padStart(2, '0')}` : ''}
-        </Text>
       </View>
-    </View>
+    </TouchableWithoutFeedback>
   );
 
   return (
@@ -361,6 +424,9 @@ const AdminParentsChat = () => {
                 <Text style={styles.emptyStateSubText}>
                   Start sending messages to 
                   {' '}{years.find(y => y.id === selectedYear)?.title}
+                </Text>
+                <Text style={styles.deleteHintText}>
+                  Long press on messages to delete them
                 </Text>
               </View>
             ) : (
@@ -512,6 +578,13 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
     lineHeight: 22,
+    marginBottom: 10,
+  },
+  deleteHintText: {
+    fontSize: 14,
+    color: '#aaa',
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
   messagesList: {
     padding: 16,
@@ -524,8 +597,12 @@ const styles = StyleSheet.create({
   parentMessageContainer: {
     alignItems: 'flex-start',
   },
+  deletingMessage: {
+    opacity: 0.6,
+  },
   messageContent: {
     maxWidth: '80%',
+    position: 'relative',
   },
   parentMessageContent: {
     maxWidth: '80%',
@@ -535,9 +612,25 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 10,
+    position: 'relative',
   },
   parentMessageBubble: {
     backgroundColor: '#e5e5ea',
+  },
+  deletingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  deletingContent: {
+    opacity: 0.5,
   },
   messageText: {
     color: 'white',

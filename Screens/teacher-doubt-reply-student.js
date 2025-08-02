@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { getDatabase, ref, push, onValue, serverTimestamp } from 'firebase/database';
+import { getDatabase, ref, push, onValue, serverTimestamp, remove, set } from 'firebase/database';
 import * as ImagePicker from 'expo-image-picker';
 
 const { width } = Dimensions.get('window');
@@ -30,24 +30,25 @@ const TeacherStudentDoubtReply = () => {
   const route = useRoute();
   const navigation = useNavigation();
   
-  const {
-    selectedYear,
-    selectedDivision,
-    teacherId,
-    employeeId,
-    teacherName
-  } = route.params || {};
+  // Get student data from navigation params
+  const { student } = route.params || {};
+  
+  // You'll need to get teacher data from your auth context or pass it through navigation
+  const teacherId = 'teacher_123'; // Get from your auth context
+  const teacherName = 'Teacher Name'; // Get from your auth context
+  const employeeId = 'emp_123'; // Get from your auth context
 
   useEffect(() => {
-    if (selectedYear && selectedDivision && teacherId) {
+    if (student?.id) {
       fetchMessages();
     }
-  }, [selectedYear, selectedDivision, teacherId]);
+  }, [student?.id]);
 
   const fetchMessages = () => {
     try {
       const database = getDatabase();
-      const chatPath = `teacher_announcements/${selectedYear.value}_${selectedDivision.value}`;
+      // Create a unique chat path using teacher and student IDs
+      const chatPath = `teacher_student_chats/${teacherId}_${student.id}`;
       const messagesRef = ref(database, chatPath);
       
       onValue(messagesRef, (snapshot) => {
@@ -84,28 +85,32 @@ const TeacherStudentDoubtReply = () => {
 
     setLoading(true);
     try {
-      const database = getDatabase();
-      const chatPath = `teacher_announcements/${selectedYear.value}_${selectedDivision.value}`;
-      const messagesRef = ref(database, chatPath);
-      
-      const messageData = {
+      // Add message to local state only (no Firebase)
+      const localMessage = {
+        id: Date.now().toString(),
         text: message.trim(),
-        teacherId: teacherId,
-        employeeId: employeeId,
-        teacherName: teacherName,
-        timestamp: serverTimestamp(),
-        year: selectedYear.value,
-        division: selectedDivision.value,
-        messageType: 'announcement',
+        senderId: teacherId,
+        senderName: teacherName,
+        senderType: 'teacher',
+        receiverId: student.id,
+        receiverName: student.name,
+        timestamp: Date.now(),
+        messageType: 'doubt_reply',
         type: 'text',
         createdAt: new Date().toISOString(),
+        read: false,
       };
-
-      await push(messagesRef, messageData);
+      
+      // Add to local messages array
+      setMessages(prevMessages => [...prevMessages, localMessage]);
+      
+      // Clear input
       setMessage('');
       
-      // Show success feedback
-      Alert.alert('Success', 'Message sent successfully!');
+      // Auto scroll to bottom
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
       
     } catch (error) {
       console.error('Error sending message:', error);
@@ -118,33 +123,87 @@ const TeacherStudentDoubtReply = () => {
   const sendImage = async (imageUri) => {
     setLoading(true);
     try {
-      const database = getDatabase();
-      const chatPath = `teacher_announcements/${selectedYear.value}_${selectedDivision.value}`;
-      const messagesRef = ref(database, chatPath);
-      
-      const messageData = {
+      // Add image message to local state only (no Firebase)
+      const localMessage = {
+        id: Date.now().toString(),
         imageUri: imageUri,
-        teacherId: teacherId,
-        employeeId: employeeId,
-        teacherName: teacherName,
-        timestamp: serverTimestamp(),
-        year: selectedYear.value,
-        division: selectedDivision.value,
-        messageType: 'announcement',
+        senderId: teacherId,
+        senderName: teacherName,
+        senderType: 'teacher',
+        receiverId: student.id,
+        receiverName: student.name,
+        timestamp: Date.now(),
+        messageType: 'doubt_reply',
         type: 'image',
         createdAt: new Date().toISOString(),
+        read: false,
       };
-
-      await push(messagesRef, messageData);
       
-      // Show success feedback
-      Alert.alert('Success', 'Image sent successfully!');
+      // Add to local messages array
+      setMessages(prevMessages => [...prevMessages, localMessage]);
+      
+      // Auto scroll to bottom
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
       
     } catch (error) {
       console.error('Error sending image:', error);
       Alert.alert('Error', 'Failed to send image. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+ const deleteMessage = async (messageId, messageSenderId) => {
+  // Check if the message belongs to the current teacher
+  if (messageSenderId !== teacherId) {
+    Alert.alert('Error', 'You can only delete your own messages');
+    return;
+  }
+
+  Alert.alert(
+    'Delete Message',
+    'Are you sure you want to delete this message?',
+    [
+      {
+        text: 'Cancel',
+        style: 'cancel',
+      },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            // Since messages are stored in local state only, 
+            // remove the message from the local messages array
+            setMessages(prevMessages => 
+              prevMessages.filter(message => message.id !== messageId)
+            );
+            
+            // Optional: If you want to also try to delete from Firebase
+            // (in case some messages are stored there), you can keep this part:
+            /*
+            const database = getDatabase();
+            const chatPath = `teacher_student_chats/${teacherId}_${student.id}`;
+            const messageRef = ref(database, `${chatPath}/${messageId}`);
+            await remove(messageRef);
+            */
+            
+          } catch (error) {
+            console.error('Error deleting message:', error);
+            Alert.alert('Error', 'Failed to delete message. Please try again.');
+          }
+        },
+      },
+    ]
+  );
+};
+
+  const handleMessageLongPress = (item) => {
+    // Only show delete option for messages from the current teacher
+    if (item.senderId === teacherId) {
+      deleteMessage(item.id, item.senderId);
     }
   };
 
@@ -168,7 +227,6 @@ const TeacherStudentDoubtReply = () => {
 
   const openCamera = async () => {
     try {
-      // Request camera permissions
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       
       if (status !== 'granted') {
@@ -176,7 +234,6 @@ const TeacherStudentDoubtReply = () => {
         return;
       }
 
-      // Launch camera
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
@@ -197,7 +254,6 @@ const TeacherStudentDoubtReply = () => {
 
   const openGallery = async () => {
     try {
-      // Request media library permissions
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       
       if (status !== 'granted') {
@@ -205,7 +261,6 @@ const TeacherStudentDoubtReply = () => {
         return;
       }
 
-      // Launch image library
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
@@ -245,31 +300,76 @@ const TeacherStudentDoubtReply = () => {
     }
   };
 
-  const renderMessage = ({ item }) => (
-    <View style={styles.messageContainer}>
-      <View style={styles.messageHeader}>
-        <View style={styles.teacherInfo}>
-          <Ionicons name="person-circle" size={20} color="#667eea" />
-          <Text style={styles.teacherName}>{item.teacherName}</Text>
+  const renderMessage = ({ item }) => {
+    const isOwnMessage = item.senderId === teacherId;
+    const isTeacherMessage = item.senderType === 'teacher';
+    
+    return (
+      <TouchableOpacity
+        style={[
+          styles.messageContainer,
+          isOwnMessage ? styles.ownMessageContainer : styles.otherMessageContainer
+        ]}
+        onLongPress={() => handleMessageLongPress(item)}
+        activeOpacity={isOwnMessage ? 0.7 : 1}
+      >
+        <View style={styles.messageHeader}>
+          <View style={styles.senderInfo}>
+            <Ionicons 
+              name={isTeacherMessage ? "person-circle" : "school"} 
+              size={20} 
+              color={isTeacherMessage ? "#667eea" : "#28a745"} 
+            />
+            <Text style={[
+              styles.senderName,
+              { color: isTeacherMessage ? "#667eea" : "#28a745" }
+            ]}>
+              {item.senderName}
+            </Text>
+            {isOwnMessage && (
+              <Text style={styles.ownMessageIndicator}>(You)</Text>
+            )}
+          </View>
+          <View style={styles.timestampContainer}>
+            <Text style={styles.timestamp}>{formatTime(item.createdAt)}</Text>
+            {isOwnMessage && (
+              <Ionicons 
+                name="trash-outline" 
+                size={14} 
+                color="#ccc" 
+                style={styles.deleteIcon}
+              />
+            )}
+          </View>
         </View>
-        <Text style={styles.timestamp}>{formatTime(item.createdAt)}</Text>
-      </View>
-      <View style={styles.messageBubble}>
-        {item.type === 'image' ? (
-          <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
-        ) : (
-          <Text style={styles.messageText}>{item.text}</Text>
+        <View style={[
+          styles.messageBubble,
+          isOwnMessage ? styles.ownMessageBubble : styles.otherMessageBubble
+        ]}>
+          {item.type === 'image' ? (
+            <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
+          ) : (
+            <Text style={[
+              styles.messageText,
+              isOwnMessage ? styles.ownMessageText : styles.otherMessageText
+            ]}>
+              {item.text}
+            </Text>
+          )}
+        </View>
+        {isOwnMessage && (
+          <Text style={styles.longPressHint}>Long press to delete</Text>
         )}
-      </View>
-    </View>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
       <Ionicons name="chatbox-ellipses-outline" size={60} color="#ccc" />
       <Text style={styles.emptyText}>No messages yet</Text>
       <Text style={styles.emptySubText}>
-        Send the first announcement to {selectedYear?.label} - {selectedDivision?.label}
+        Start the conversation with {student?.name}
       </Text>
     </View>
   );
@@ -289,12 +389,16 @@ const TeacherStudentDoubtReply = () => {
         
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle}>
-            {selectedYear?.label} - {selectedDivision?.label}
+            {student?.name || 'Student'}
           </Text>
-          <Text style={styles.headerSubtitle}>Students Doubts</Text>
+          <Text style={styles.headerSubtitle}>Doubt Discussion</Text>
         </View>
         
-        
+        <View style={styles.studentAvatar}>
+          <Text style={styles.studentAvatarText}>
+            {student?.name?.charAt(0) || 'S'}
+          </Text>
+        </View>
       </View>
 
       <KeyboardAvoidingView 
@@ -322,12 +426,12 @@ const TeacherStudentDoubtReply = () => {
               onPress={showImagePicker}
               disabled={loading}
             >
-              <Ionicons name="camera" size={40} color="#667eea" />
+              <Ionicons name="camera" size={24} color="#667eea" />
             </TouchableOpacity>
             
             <TextInput
               style={styles.textInput}
-              placeholder="Type Your Answer..."
+              placeholder="Type your answer..."
               placeholderTextColor="#999"
               value={message}
               onChangeText={setMessage}
@@ -345,21 +449,16 @@ const TeacherStudentDoubtReply = () => {
               disabled={!message.trim() || loading}
             >
               {loading ? (
-                <Ionicons name="hourglass" size={24} color="#fff" />
+                <Ionicons name="hourglass" size={20} color="#fff" />
               ) : (
-                <Ionicons name="send" size={24} color="#fff" />
+                <Ionicons name="send" size={20} color="#fff" />
               )}
             </TouchableOpacity>
           </View>
           
-          <View style={styles.inputInfo}>
-            <Text style={styles.characterCount}>
-              {message.length}/500
-            </Text>
-            <Text style={styles.inputHint}>
-              💡 This message will be sent to all students in {selectedYear?.label} - {selectedDivision?.label}
-            </Text>
-          </View>
+          <Text style={styles.characterCount}>
+            {message.length}/500
+          </Text>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -397,11 +496,21 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     color: 'rgba(255, 255, 255, 0.8)',
-    fontSize: 24,
+    fontSize: 14,
     marginTop: 2,
   },
-  headerRight: {
-    padding: 8,
+  studentAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  studentAvatarText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   content: {
     flex: 1,
@@ -434,48 +543,87 @@ const styles = StyleSheet.create({
   messageContainer: {
     marginBottom: 16,
   },
+  ownMessageContainer: {
+    alignItems: 'flex-end',
+  },
+  otherMessageContainer: {
+    alignItems: 'flex-start',
+  },
   messageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 6,
+    width: '100%',
   },
-  teacherInfo: {
+  senderInfo: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  teacherName: {
+  senderName: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#667eea',
     marginLeft: 6,
+  },
+  ownMessageIndicator: {
+    fontSize: 12,
+    color: '#667eea',
+    fontWeight: '400',
+    marginLeft: 4,
+    fontStyle: 'italic',
+  },
+  timestampContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   timestamp: {
     fontSize: 12,
     color: '#999',
   },
+  deleteIcon: {
+    marginLeft: 6,
+  },
   messageBubble: {
-    backgroundColor: '#667eea',
     padding: 12,
     borderRadius: 12,
-    borderTopLeftRadius: 4,
-    maxWidth: '90%',
+    maxWidth: '80%',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
     elevation: 2,
   },
+  ownMessageBubble: {
+    backgroundColor: '#667eea',
+    borderTopRightRadius: 4,
+  },
+  otherMessageBubble: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 4,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
   messageText: {
-    color: '#fff',
     fontSize: 16,
     lineHeight: 20,
   },
+  ownMessageText: {
+    color: '#fff',
+  },
+  otherMessageText: {
+    color: '#333',
+  },
   messageImage: {
-    width: 250,
-    height: 200,
+    width: 200,
+    height: 150,
     borderRadius: 8,
     resizeMode: 'cover',
+  },
+  longPressHint: {
+    fontSize: 10,
+    color: '#999',
+    fontStyle: 'italic',
+    marginTop: 4,
   },
   inputContainer: {
     backgroundColor: '#fff',
@@ -490,17 +638,13 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     backgroundColor: '#f8f9fa',
     borderRadius: 24,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 8,
     marginBottom: 8,
   },
   imageButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
+    padding: 8,
+    marginRight: 8,
   },
   textInput: {
     flex: 1,
@@ -511,9 +655,9 @@ const styles = StyleSheet.create({
   },
   sendButton: {
     backgroundColor: '#667eea',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 8,
@@ -521,21 +665,10 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     backgroundColor: '#ccc',
   },
-  inputInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
   characterCount: {
     fontSize: 12,
     color: '#999',
-  },
-  inputHint: {
-    fontSize: 12,
-    color: '#667eea',
-    flex: 1,
-    textAlign: 'right',
-    marginLeft: 8,
+    textAlign: 'center',
   },
 });
 

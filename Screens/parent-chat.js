@@ -17,7 +17,7 @@ import {
   Keyboard
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons'; 
-import { firebase, database } from './firebase';
+import { database } from './firebase';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import ParentsTeacherChat from './ParentsTeacherChat';
 import { useNavigation } from '@react-navigation/native';
@@ -120,6 +120,29 @@ const AdminChatScreen = ({ route }) => {
       keyboardDidShowListener.remove();
     };
   }, []);
+
+  // Delete message function
+  const deleteMessage = (messageId) => {
+    Alert.alert(
+      'Delete Message',
+      'Are you sure you want to delete this message?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setMessages(prevMessages => 
+              prevMessages.filter(message => message.id !== messageId)
+            );
+          },
+        },
+      ]
+    );
+  };
   
   // Send a new message (without saving to Firebase)
   const sendMessage = () => {
@@ -270,11 +293,21 @@ const AdminChatScreen = ({ route }) => {
     const messageDate = new Date(item.timestamp);
     const formattedTime = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     
+    const MessageWrapper = isParent ? TouchableOpacity : View;
+    const wrapperProps = isParent ? {
+      onLongPress: () => deleteMessage(item.id),
+      delayLongPress: 500,
+      activeOpacity: 0.8
+    } : {};
+    
     return (
-      <View style={[
-        styles.messageItem,
-        isParent ? styles.parentMessage : styles.teacherMessage
-      ]}>
+      <MessageWrapper
+        style={[
+          styles.messageItem,
+          isParent ? styles.parentMessage : styles.teacherMessage
+        ]}
+        {...wrapperProps}
+      >
         {!isParent && <Text style={styles.senderName}>Admin</Text>}
         
         {item.type === 'image' ? (
@@ -295,7 +328,12 @@ const AdminChatScreen = ({ route }) => {
             </View>
           )}
         </View>
-      </View>
+        
+        {/* Delete hint for parent messages */}
+        {isParent && (
+          <Text style={styles.deleteHint}>Long press to delete</Text>
+        )}
+      </MessageWrapper>
     );
   };
   
@@ -611,6 +649,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     maxWidth: '80%',
     elevation: 1,
+    position: 'relative',
   },
   parentMessage: {
     alignSelf: 'flex-end',
@@ -651,6 +690,13 @@ const styles = StyleSheet.create({
   },
   readStatus: {
     marginLeft: 4,
+  },
+  deleteHint: {
+    fontSize: 8,
+    color: '#B0BEC5',
+    textAlign: 'center',
+    marginTop: 2,
+    fontStyle: 'italic',
   },
   inputContainer: {
     flexDirection: 'row',

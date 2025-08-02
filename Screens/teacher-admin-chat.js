@@ -25,7 +25,9 @@ const teacheradminChatScreen = () => {
   
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const flatListRef = useRef(null);
+  const textInputRef = useRef(null);
 
   const handleSend = () => {
     if (newMessage.trim() === '') return;
@@ -45,6 +47,32 @@ const teacheradminChatScreen = () => {
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
+  };
+
+  const handleDeleteMessage = (messageId) => {
+    Alert.alert(
+      'Delete Message',
+      'Are you sure you want to delete this message?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setMessages(prevMessages => 
+              prevMessages.filter(message => message.id !== messageId)
+            );
+          },
+        },
+      ]
+    );
+  };
+
+  const handleLongPress = (message) => {
+    // Only allow deletion of own messages (admin messages in this case)
+    if (message.sender === 'admin') {
+      handleDeleteMessage(message.id);
+    }
   };
 
   const sendImage = async (imageUri) => {
@@ -154,10 +182,15 @@ const teacheradminChatScreen = () => {
   };
 
   const renderMessage = ({ item }) => (
-    <View style={[
-      styles.messageContainer,
-      item.sender === 'admin' ? styles.adminMessage : styles.teacherMessage
-    ]}>
+    <TouchableOpacity
+      style={[
+        styles.messageContainer,
+        item.sender === 'admin' ? styles.adminMessage : styles.teacherMessage
+      ]}
+      onLongPress={() => handleLongPress(item)}
+      delayLongPress={500}
+      activeOpacity={0.8}
+    >
       {item.type === 'image' ? (
         <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
       ) : (
@@ -168,22 +201,33 @@ const teacheradminChatScreen = () => {
       <Text style={item.sender === 'admin' ? styles.adminTime : styles.teacherTime}>
         {item.time}
       </Text>
-    </View>
+      {/* Visual indicator for deletable messages */}
+      
+    </TouchableOpacity>
   );
 
-  // Auto-scroll when keyboard appears
+  // Handle keyboard events
   useEffect(() => {
     const keyboardDidShowListener = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      () => {
+      (event) => {
+        setKeyboardHeight(event.endCoordinates.height);
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
-        }, 300);
+        }, 100);
+      }
+    );
+
+    const keyboardDidHideListener = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
       }
     );
 
     return () => {
       keyboardDidShowListener.remove();
+      keyboardDidHideListener.remove();
     };
   }, []);
 
@@ -192,27 +236,40 @@ const teacheradminChatScreen = () => {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity>
-         
+          {/* Add back button icon here if needed */}
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Chat</Text>
-        <View style={{ width: 24 }} />
+        
       </View>
 
-      {/* Messages List - Normal top-to-bottom flow */}
+      {/* Messages List */}
       <FlatList
         ref={flatListRef}
         data={messages}
         renderItem={renderMessage}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.messagesContainer}
+        contentContainerStyle={[
+          styles.messagesContainer,
+          { paddingBottom: keyboardHeight > 0 ? 10 : 5 }
+        ]}
+        style={{ marginBottom: Platform.OS === 'ios' ? 0 : keyboardHeight }}
         onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        showsVerticalScrollIndicator={false}
       />
 
       {/* Input Area */}
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.inputContainer}
+        style={[
+          styles.inputContainer,
+          Platform.OS === 'android' && keyboardHeight > 0 && {
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+          }
+        ]}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
         <TouchableOpacity
           style={styles.imageButton}
@@ -223,6 +280,7 @@ const teacheradminChatScreen = () => {
         </TouchableOpacity>
         
         <TextInput
+          ref={textInputRef}
           style={styles.input}
           value={newMessage}
           onChangeText={setNewMessage}
@@ -230,15 +288,19 @@ const teacheradminChatScreen = () => {
           placeholderTextColor="#999"
           multiline
           editable={!loading}
+          returnKeyType="send"
+          onSubmitEditing={handleSend}
+          blurOnSubmit={false}
+          textAlignVertical="center"
         />
         
         <TouchableOpacity 
           style={[
             styles.sendButton,
-            (!newMessage.trim() || loading) && styles.sendButtonDisabled
+            newMessage.trim() && !loading ? styles.sendButtonActive : styles.sendButtonDisabled
           ]} 
           onPress={handleSend}
-          disabled={(!newMessage.trim() && !loading) || loading}
+          disabled={!newMessage.trim() || loading}
         >
           {loading ? (
             <Ionicons name="hourglass" size={20} color="#fff" />
@@ -264,11 +326,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
     backgroundColor: '#fff',
-  },
-  backIcon: {
-    width: 24,
-    height: 24,
-    tintColor: '#6200ee',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
   },
   headerTitle: {
     fontSize: 20,
@@ -277,13 +339,14 @@ const styles = StyleSheet.create({
   },
   messagesContainer: {
     padding: 15,
-    paddingBottom: 5,
+    flexGrow: 1,
   },
   messageContainer: {
     maxWidth: '80%',
     padding: 12,
     borderRadius: 12,
     marginBottom: 15,
+    position: 'relative',
   },
   adminMessage: {
     alignSelf: 'flex-end',
@@ -300,10 +363,12 @@ const styles = StyleSheet.create({
   adminText: {
     color: '#fff',
     fontSize: 16,
+    lineHeight: 20,
   },
   teacherText: {
     color: '#333',
     fontSize: 16,
+    lineHeight: 20,
   },
   adminTime: {
     fontSize: 10,
@@ -317,6 +382,13 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
     marginTop: 5,
   },
+  deleteHint: {
+    fontSize: 8,
+    color: 'rgba(255,255,255,0.5)',
+    alignSelf: 'center',
+    marginTop: 2,
+    fontStyle: 'italic',
+  },
   messageImage: {
     width: 200,
     height: 150,
@@ -326,12 +398,17 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     padding: 10,
     paddingBottom: Platform.OS === 'ios' ? 25 : 10,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
   },
   imageButton: {
     justifyContent: 'center',
@@ -339,25 +416,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     height: 40,
     marginRight: 10,
+    marginBottom: 4,
   },
   input: {
     flex: 1,
     minHeight: 40,
     maxHeight: 100,
     paddingHorizontal: 15,
-    paddingVertical: 8,
+    paddingVertical: 10,
     backgroundColor: '#f0f0f0',
     borderRadius: 20,
     marginRight: 10,
     fontSize: 16,
+    lineHeight: 20,
+    marginBottom: 4,
   },
   sendButton: {
     justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: 15,
     height: 40,
     backgroundColor: '#6200ee',
     borderRadius: 20,
-    opacity: 0.7,
+    marginBottom: 4,
   },
   sendButtonActive: {
     opacity: 1,
@@ -369,6 +450,7 @@ const styles = StyleSheet.create({
   sendText: {
     color: '#fff',
     fontWeight: '600',
+    fontSize: 14,
   },
 });
 

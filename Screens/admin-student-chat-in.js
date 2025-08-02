@@ -106,6 +106,37 @@ const AdminChatScreen = ({ route }) => {
     }
   };
 
+  // Delete message function
+  const deleteMessage = useCallback((messageId) => {
+    Alert.alert(
+      'Delete Message',
+      'Are you sure you want to delete this message?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setMessages(prevMessages => 
+              prevMessages.filter(msg => msg.id !== messageId)
+            );
+          },
+        },
+      ]
+    );
+  }, []);
+
+  // Handle long press on message
+  const handleMessageLongPress = useCallback((item) => {
+    // Only allow admin messages to be deleted
+    if (item.senderType === 'admin') {
+      deleteMessage(item.id);
+    }
+  }, [deleteMessage]);
+
   // Show image picker options
   const showImagePicker = () => {
     Alert.alert(
@@ -187,10 +218,15 @@ const AdminChatScreen = ({ route }) => {
     const formattedTime = `${item.timestamp.getHours()}:${String(item.timestamp.getMinutes()).padStart(2, '0')}`;
 
     return (
-      <View style={[
-        styles.messageContainer,
-        isAdmin && styles.adminMessageContainer
-      ]}>
+      <TouchableOpacity
+        style={[
+          styles.messageContainer,
+          isAdmin && styles.adminMessageContainer
+        ]}
+        onLongPress={() => handleMessageLongPress(item)}
+        delayLongPress={500}
+        activeOpacity={0.7}
+      >
         <View style={styles.messageContent}>
           {isAdmin && (
             <Text style={styles.senderName}>{item.sender}</Text>
@@ -213,9 +249,9 @@ const AdminChatScreen = ({ route }) => {
             {formattedTime}
           </Text>
         </View>
-      </View>
+      </TouchableOpacity>
     );
-  }, []);
+  }, [handleMessageLongPress]);
 
   return (
     <SafeAreaView style={styles.chatSafeArea}>
@@ -239,6 +275,9 @@ const AdminChatScreen = ({ route }) => {
             <Text style={styles.emptyStateText}>No messages yet</Text>
             <Text style={styles.emptyStateSubText}>
               Messages sent here will be visible to all students of {year} Year, Division {division}
+            </Text>
+            <Text style={styles.emptyStateHintText}>
+              Long press on your messages to delete them
             </Text>
           </View>
         ) : (
@@ -342,6 +381,13 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
     lineHeight: 22,
+    marginBottom: 10,
+  },
+  emptyStateHintText: {
+    fontSize: 14,
+    color: '#aaa',
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
   messagesList: {
     padding: 16,

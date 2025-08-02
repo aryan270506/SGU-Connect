@@ -25,6 +25,7 @@ const teacherteacherChatScreen = () => {
   
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const flatListRef = useRef(null);
 
   const handleSend = () => {
@@ -45,6 +46,25 @@ const teacherteacherChatScreen = () => {
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
+  };
+
+  const handleDeleteMessage = (messageId) => {
+    Alert.alert(
+      'Delete Message',
+      'Are you sure you want to delete this message?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setMessages(prevMessages => 
+              prevMessages.filter(message => message.id !== messageId)
+            );
+          }
+        }
+      ]
+    );
   };
 
   const sendImage = async (imageUri) => {
@@ -154,10 +174,19 @@ const teacherteacherChatScreen = () => {
   };
 
   const renderMessage = ({ item }) => (
-    <View style={[
-      styles.messageContainer,
-      item.sender === 'admin' ? styles.adminMessage : styles.teacherMessage
-    ]}>
+    <TouchableOpacity
+      style={[
+        styles.messageContainer,
+        item.sender === 'admin' ? styles.adminMessage : styles.teacherMessage
+      ]}
+      onLongPress={() => {
+        // Only allow deletion of messages sent by the current user (admin)
+        if (item.sender === 'admin') {
+          handleDeleteMessage(item.id);
+        }
+      }}
+      delayLongPress={500}
+    >
       {item.type === 'image' ? (
         <Image source={{ uri: item.imageUri }} style={styles.messageImage} />
       ) : (
@@ -168,22 +197,31 @@ const teacherteacherChatScreen = () => {
       <Text style={item.sender === 'admin' ? styles.adminTime : styles.teacherTime}>
         {item.time}
       </Text>
-    </View>
+    </TouchableOpacity>
   );
 
-  // Auto-scroll when keyboard appears
+  // Handle keyboard events
   useEffect(() => {
-    const keyboardDidShowListener = Keyboard.addListener(
+    const keyboardWillShowListener = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      () => {
+      (event) => {
+        setKeyboardHeight(event.endCoordinates.height);
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
-        }, 300);
+        }, 100);
+      }
+    );
+
+    const keyboardWillHideListener = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
       }
     );
 
     return () => {
-      keyboardDidShowListener.remove();
+      keyboardWillShowListener.remove();
+      keyboardWillHideListener.remove();
     };
   }, []);
 
@@ -198,21 +236,30 @@ const teacherteacherChatScreen = () => {
         <View style={{ width: 24 }} />
       </View>
 
-      {/* Messages List - Normal top-to-bottom flow */}
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.messagesContainer}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
-      />
+      {/* Messages List */}
+      <View style={[styles.messagesWrapper, { marginBottom: keyboardHeight }]}>
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.messagesContainer}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        />
+      </View>
 
-      {/* Input Area */}
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.inputContainer}
+      {/* Input Area - positioned absolutely above keyboard */}
+      <View 
+        style={[
+          styles.inputContainer,
+          Platform.OS === 'ios' && keyboardHeight > 0 && {
+            position: 'absolute',
+            bottom: keyboardHeight,
+            left: 0,
+            right: 0,
+          }
+        ]}
       >
         <TouchableOpacity
           style={styles.imageButton}
@@ -246,7 +293,7 @@ const teacherteacherChatScreen = () => {
             <Text style={styles.sendText}>Send</Text>
           )}
         </TouchableOpacity>
-      </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 };
@@ -275,9 +322,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
   },
+  messagesWrapper: {
+    flex: 1,
+  },
   messagesContainer: {
     padding: 15,
     paddingBottom: 5,
+    flexGrow: 1,
   },
   messageContainer: {
     maxWidth: '80%',

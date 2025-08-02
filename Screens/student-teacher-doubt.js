@@ -252,7 +252,7 @@ const TeacherListItem = ({ teacher, onPress }) => (
         </View>
       </View>
       <Text style={styles.teacherEmail}>{teacher.email}</Text>
-      <Text style={styles.teacherEmployeeId}>ID: {teacher.employee_id}</Text>
+      
       {teacher.courseCodes.length > 0 && (
         <Text style={styles.courseCodes}>
           Courses: {teacher.courseCodes.join(', ')}
